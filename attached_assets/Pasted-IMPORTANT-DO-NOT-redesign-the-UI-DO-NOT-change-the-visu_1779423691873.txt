@@ -1,0 +1,485 @@
+IMPORTANT:
+DO NOT redesign the UI.
+DO NOT change the visual appearance, layout, financial-terminal aesthetic, dark theme, cards, charts, tabs, spacing, typography, animations, network graph style, liquidity bars, heatmaps, or dashboard structure.
+
+The current dashboard UI must remain EXACTLY the same visually.
+
+ONLY upgrade the architecture, backend, functionality, APIs, database, real-time systems, authentication, and enterprise functionality underneath the existing interface.
+
+This project is an enterprise-grade simulation platform for:
+“Cross-Border CBDC Clearing and Settlement Optimization System”
+
+The system simulates a next-generation multi-CBDC financial infrastructure for central banks, regulators, and financial institutions.
+
+========================================================
+CORE OBJECTIVE
+========================================================
+
+Transform the current prototype into a fully functional enterprise-style fintech platform while preserving the exact same UI/UX.
+
+The project should feel similar to:
+- Bloomberg Terminal
+- JPMorgan CBDC Dashboard
+- BIS Settlement Infrastructure Simulator
+- Institutional financial operations platform
+
+This is NOT a real banking platform.
+This is a realistic simulation platform.
+
+No actual money movement should occur.
+
+========================================================
+TECH STACK REQUIREMENTS
+========================================================
+
+Frontend:
+- React
+- TypeScript
+- Tailwind CSS
+- Framer Motion
+- D3.js
+- Plotly
+- Zustand or Redux
+- Axios
+
+Backend:
+- FastAPI (Python)
+- Modular microservices architecture
+- REST APIs
+- WebSocket support
+- Background task scheduler
+
+Database:
+- PostgreSQL
+- SQLAlchemy ORM
+- Alembic migrations
+
+Optional Graph Layer:
+- Neo4j-compatible architecture for future graph DB support
+
+Authentication:
+- JWT Authentication
+- Role-Based Access Control (RBAC)
+
+Deployment:
+- Docker
+- Docker Compose
+- Environment variables
+- Replit-compatible architecture
+
+========================================================
+VERY IMPORTANT UI REQUIREMENTS
+========================================================
+
+KEEP THE CURRENT UI EXACTLY THE SAME.
+
+Preserve:
+- dashboard tabs
+- cards
+- charts
+- D3 network graph
+- route visualizations
+- liquidity bars
+- stress charts
+- dark theme
+- animations
+- typography
+- spacing
+- financial dashboard look
+- sidebar layout
+- metrics cards
+
+Convert the current frontend into:
+- reusable React components
+- TypeScript-safe architecture
+- API-driven frontend
+
+DO NOT redesign anything visually.
+
+========================================================
+CURRENT MODULES THAT MUST REMAIN
+========================================================
+
+1. CBDC Network Visualization
+2. Route Optimizer
+3. FX Risk Heatmap
+4. Liquidity Monitoring
+5. Settlement Ledger
+6. Stress Testing Engine
+7. Corridor Analytics
+8. Compliance Engine
+
+========================================================
+MICROSERVICES ARCHITECTURE
+========================================================
+
+Create modular services for:
+
+1. Transaction Service
+2. Settlement Service
+3. Routing Service
+4. FX Risk Service
+5. Liquidity Service
+6. Compliance Service
+7. Notification Service
+8. Audit Service
+9. Authentication Service
+10. Stress Testing Service
+
+========================================================
+DATABASE REQUIREMENTS
+========================================================
+
+Use PostgreSQL for persistent storage.
+
+Create tables for:
+
+users
+institutions
+transactions
+transaction_routes
+fx_rates
+liquidity_pools
+corridors
+compliance_logs
+stress_test_results
+audit_logs
+network_nodes
+risk_scores
+notifications
+system_events
+settlement_blocks
+
+ALL DATA MUST PERSIST.
+
+No temporary in-memory data.
+
+========================================================
+REAL-TIME SYSTEM
+========================================================
+
+Implement WebSockets for:
+
+- live settlement updates
+- transaction streaming
+- FX updates
+- liquidity updates
+- risk score refresh
+- compliance alerts
+- stress simulation updates
+- real-time dashboard refresh
+
+========================================================
+TRANSACTION LIFECYCLE
+========================================================
+
+Implement full transaction state management:
+
+INITIATED
+VALIDATING
+COMPLIANCE_CHECK
+ROUTE_OPTIMIZATION
+LIQUIDITY_RESERVED
+SETTLEMENT_PROCESSING
+SETTLED
+FAILED
+REJECTED
+
+Display transaction state transitions in real time on dashboard.
+
+========================================================
+ROUTE OPTIMIZATION ENGINE
+========================================================
+
+Implement:
+
+- Dijkstra routing
+- weighted graph optimization
+- multi-hop settlement routing
+- cost optimization
+- latency optimization
+- FX risk optimization
+- compliance-aware routing
+- liquidity-aware routing
+
+Support:
+- top-k route generation
+- route scoring
+- historical route analytics
+
+========================================================
+FX RISK ENGINE
+========================================================
+
+Implement:
+
+- EWMA volatility estimation
+- AR(1) forecasting
+- volatility regime detection
+- live FX risk scoring
+- historical risk analytics
+
+Integrate real FX APIs:
+- AlphaVantage
+- ExchangeRate API
+
+Requirements:
+- automatic refresh
+- periodic recalculation
+- fallback to simulated data if APIs fail
+
+========================================================
+LIQUIDITY MANAGEMENT ENGINE
+========================================================
+
+Implement:
+
+- node liquidity pools
+- corridor liquidity tracking
+- utilization monitoring
+- liquidity recycling
+- liquidity injection simulation
+- reserve thresholds
+- congestion detection
+
+========================================================
+COMPLIANCE ENGINE
+========================================================
+
+Implement:
+
+- AML checks
+- sanctions checks
+- high-risk corridor detection
+- transaction flagging
+- compliance scoring
+- jurisdiction policy simulation
+- audit logging
+
+========================================================
+STRESS TESTING ENGINE
+========================================================
+
+Implement Monte Carlo simulation for:
+
+- FX shocks
+- liquidity crises
+- corridor failures
+- settlement congestion
+- geopolitical instability
+- latency spikes
+
+Generate:
+- resilience metrics
+- VaR metrics
+- settlement success rates
+- failure analytics
+
+========================================================
+BLOCKCHAIN SIMULATION LAYER
+========================================================
+
+DO NOT implement a real blockchain.
+
+Instead simulate enterprise blockchain behavior using:
+
+- transaction hashing
+- cryptographic transaction IDs
+- immutable settlement ledger simulation
+- chained settlement blocks
+- previous block hash references
+- tamper detection
+- ledger validation
+- audit trail verification
+
+Use:
+- Python hashlib
+- blockchain-inspired ledger chaining
+
+========================================================
+SECURITY & PRIVACY LAYER
+========================================================
+
+Implement architecture placeholders and interfaces for:
+
+1. Zero Knowledge Proofs (ZKP)
+- privacy-preserving compliance verification
+
+2. Secure Multi-Party Computation (MPC)
+- secure collaborative liquidity/risk calculations
+
+3. DID/VC (Digital Identity)
+- institution identity verification
+- verifiable compliance credentials
+
+Do NOT implement heavy cryptography.
+Only enterprise-ready architecture placeholders.
+
+========================================================
+AUTHENTICATION & AUTHORIZATION
+========================================================
+
+Implement:
+
+- JWT authentication
+- secure login system
+- password hashing
+- role-based access control
+
+Roles:
+- Central Bank Admin
+- Commercial Bank User
+- Regulator
+- Auditor
+
+========================================================
+ADMIN CONTROL PANEL
+========================================================
+
+Create administrative controls for:
+
+- liquidity injection
+- corridor activation/deactivation
+- node failure simulation
+- stress scenario triggering
+- transaction monitoring
+- audit inspection
+- risk threshold management
+
+========================================================
+ALERTS & NOTIFICATIONS
+========================================================
+
+Implement real-time alerts for:
+
+- high FX volatility
+- liquidity shortages
+- failed settlements
+- compliance violations
+- corridor congestion
+- suspicious activity
+
+========================================================
+HISTORICAL ANALYTICS
+========================================================
+
+Implement:
+
+- historical route tracking
+- settlement analytics
+- risk trend analysis
+- liquidity trend charts
+- corridor performance analytics
+- replay of past stress simulations
+
+========================================================
+FRONTEND COMPONENT STRUCTURE
+========================================================
+
+Convert frontend into reusable components:
+
+- Sidebar.tsx
+- MetricsBar.tsx
+- NetworkGraph.tsx
+- FXHeatmap.tsx
+- LiquidityPanel.tsx
+- RouteOptimizer.tsx
+- StressTestingPanel.tsx
+- SettlementLedger.tsx
+- NotificationPanel.tsx
+- AdminDashboard.tsx
+
+========================================================
+API ARCHITECTURE
+========================================================
+
+Implement proper frontend-backend communication using:
+
+- Axios
+- async service layers
+- centralized API routes
+- error handling
+- retries
+- loading states
+- skeleton loaders
+
+========================================================
+SECURITY REQUIREMENTS
+========================================================
+
+Implement:
+
+- API rate limiting
+- request validation
+- CORS protection
+- JWT expiry handling
+- environment variable protection
+- secure secrets management
+
+========================================================
+DEVOPS & DEPLOYMENT
+========================================================
+
+Include:
+
+- Docker setup
+- docker-compose
+- environment configs
+- GitHub Actions CI/CD pipeline
+- production-ready folder structure
+
+========================================================
+ENTERPRISE ARCHITECTURE
+========================================================
+
+Use scalable architecture:
+
+Frontend/
+Backend/
+Services/
+Controllers/
+Repositories/
+Middleware/
+Models/
+Schemas/
+Routes/
+Utils/
+WebSockets/
+Database/
+Analytics/
+Security/
+
+========================================================
+SIMULATION MODE
+========================================================
+
+Implement digital-twin simulation mode:
+
+- synthetic CBDC transaction generation
+- synthetic liquidity movement
+- scenario playback
+- stress replay engine
+- controllable simulation speed
+
+========================================================
+FINAL REQUIREMENTS
+========================================================
+
+The final system must:
+- preserve the exact current UI
+- become fully API-driven
+- use real databases
+- support real-time updates
+- simulate enterprise-grade CBDC infrastructure
+- look and behave like institutional fintech software
+
+The platform should feel realistic enough for:
+- JPMorgan
+- Barclays
+- BIS
+- Central bank research demos
+- enterprise fintech showcases
+
+Again:
+DO NOT redesign the UI.
+ONLY upgrade the system underneath the existing interface.

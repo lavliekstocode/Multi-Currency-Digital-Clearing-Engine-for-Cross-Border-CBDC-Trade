@@ -1,0 +1,1819 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>CBDC Clearing Engine</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script id="tailwind-config">
+tailwind.config = {
+  darkMode:"class",
+  theme:{
+    extend:{
+      colors:{
+        "primary":"#2463eb",
+        "bg-dark":"#0d1117",
+        "card-dark":"#161b22",
+        "card-darker":"#0d1117",
+        "border-dark":"#30363d",
+      },
+      fontFamily:{"display":["Inter","sans-serif"]}
+    }
+  }
+}
+</script>
+<style>
+body { font-family:'Inter',sans-serif; }
+.material-symbols-outlined { font-variation-settings:'FILL' 0,'wght' 400,'GRAD' 0,'opsz' 24; }
+.tab-active { color:#2463eb; border-bottom:2px solid #2463eb; }
+.tab-inactive { color:#94a3b8; }
+.tab-inactive:hover { color:#e2e8f0; }
+.panel { display:none; }
+.panel.active { display:flex; flex-direction:column; }
+::-webkit-scrollbar { width:4px; height:4px; }
+::-webkit-scrollbar-track { background:#0d1117; }
+::-webkit-scrollbar-thumb { background:#334155; border-radius:9999px; }
+.heat-cell { display:flex; align-items:center; justify-content:center; border-radius:4px; font-size:10px; font-weight:600; cursor:pointer; transition:all 0.15s; }
+.heat-cell:hover { transform:scale(1.2); z-index:10; position:relative; }
+.liq-bar { transition:width 1s cubic-bezier(0.4,0,0.2,1); }
+@keyframes row-in { from{opacity:0;transform:translateX(-4px)} to{opacity:1;transform:none} }
+.ledger-row { animation:row-in 0.35s ease both; }
+@keyframes ping { 75%,100%{transform:scale(2);opacity:0} }
+.animate-ping { animation:ping 1s cubic-bezier(0,0,0.2,1) infinite; }
+.node-tooltip {
+  position:fixed; z-index:9999; pointer-events:none;
+  background:#1e293b; border:1px solid #334155; border-radius:8px;
+  padding:8px 12px; font-size:11px; color:#e2e8f0;
+  box-shadow:0 8px 24px rgba(0,0,0,0.5); opacity:0; transition:opacity 0.12s;
+  white-space:nowrap;
+}
+.node-tooltip.show { opacity:1; }
+.route-node { display:inline-flex; align-items:center; gap:4px; padding:4px 10px; border-radius:6px; font-weight:700; font-size:13px; }
+@keyframes dash-flow{to{stroke-dashoffset:-24}}
+</style>
+</head>
+<body class="bg-bg-dark text-slate-100 font-display antialiased">
+<div class="flex h-screen w-full flex-col overflow-hidden">
+
+<!-- TOP NAV -->
+<header class="flex h-14 items-center justify-between border-b border-border-dark bg-card-dark px-6 shrink-0 z-50">
+  <div class="flex items-center gap-8">
+    <div class="flex items-center gap-3 text-primary">
+      <span class="material-symbols-outlined text-2xl">hub</span>
+      <h2 class="text-base font-bold tracking-tight text-slate-100">CBDC Clearing Engine</h2>
+    </div>
+    <nav class="flex items-center">
+      <button onclick="switchTab('network',this)" class="nav-tab tab-active text-sm font-semibold px-4 py-4 transition-colors">Network</button>
+      <button onclick="switchTab('route',this)" class="nav-tab tab-inactive text-sm font-medium px-4 py-4 transition-colors">Route Optimizer</button>
+      <button onclick="switchTab('fx',this)" class="nav-tab tab-inactive text-sm font-medium px-4 py-4 transition-colors">FX Risk</button>
+      <button onclick="switchTab('liquidity',this)" class="nav-tab tab-inactive text-sm font-medium px-4 py-4 transition-colors">Liquidity</button>
+      <button onclick="switchTab('stress',this)" class="nav-tab tab-inactive text-sm font-medium px-4 py-4 transition-colors">Stress Testing</button>
+    </nav>
+  </div>
+  <div class="flex items-center gap-4">
+    <div class="relative flex items-center">
+      <span class="material-symbols-outlined absolute left-3 text-slate-400 text-base">search</span>
+      <input id="searchInput" class="h-8 w-56 rounded-lg border border-border-dark bg-bg-dark pl-9 text-xs text-slate-100 focus:ring-1 focus:ring-primary focus:outline-none placeholder:text-slate-500" placeholder="Search corridors or nodes..." type="text" oninput="handleSearch(this.value)"/>
+    </div>
+    <div class="flex h-8 items-center gap-2 rounded-lg bg-bg-dark px-3 text-xs font-mono text-slate-400 border border-border-dark">
+      <span class="relative flex h-2 w-2">
+        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+        <span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+      </span>
+      <span id="clock">UTC --:--:--</span>
+    </div>
+    <div class="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center border border-primary/30">
+      <span class="material-symbols-outlined text-primary text-base">account_balance</span>
+    </div>
+  </div>
+</header>
+
+<!-- BODY -->
+<div class="flex flex-1 overflow-hidden">
+
+<!-- SIDEBAR -->
+<aside class="w-56 border-r border-border-dark bg-card-dark flex flex-col p-4 gap-5 shrink-0 overflow-y-auto">
+  <div>
+    <h3 class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-3">Routing Parameters</h3>
+    <div class="space-y-1">
+      <div class="flex items-center justify-between rounded-lg bg-primary/10 p-2.5 border border-primary/20">
+        <div class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-sm">settings_input_component</span><span class="text-xs font-semibold text-slate-200">α Cost Weight</span></div>
+        <span class="text-xs font-mono text-primary" id="alphaLbl">0.35</span>
+      </div>
+      <div class="rounded-lg bg-slate-800/40 p-2 px-2.5">
+        <input type="range" min="0" max="1" step="0.05" value="0.35" oninput="updateWeight('alphaLbl',this.value,'alpha')" class="w-full h-1 appearance-none bg-slate-700 rounded accent-primary cursor-pointer">
+      </div>
+      <div class="flex items-center justify-between rounded-lg hover:bg-slate-800/40 p-2.5 transition-colors">
+        <div class="flex items-center gap-2"><span class="material-symbols-outlined text-slate-500 text-sm">build</span><span class="text-xs font-medium text-slate-300">β FX Risk Weight</span></div>
+        <span class="text-xs font-mono text-slate-400" id="betaLbl">0.25</span>
+      </div>
+      <div class="rounded-lg bg-slate-800/40 p-2 px-2.5">
+        <input type="range" min="0" max="1" step="0.05" value="0.25" oninput="updateWeight('betaLbl',this.value,'beta')" class="w-full h-1 appearance-none bg-slate-700 rounded accent-primary cursor-pointer">
+      </div>
+      <div class="flex items-center justify-between rounded-lg hover:bg-slate-800/40 p-2.5 transition-colors">
+        <div class="flex items-center gap-2"><span class="material-symbols-outlined text-slate-500 text-sm">schedule</span><span class="text-xs font-medium text-slate-300">γ Time Weight</span></div>
+        <span class="text-xs font-mono text-slate-400" id="gammaLbl">0.20</span>
+      </div>
+      <div class="rounded-lg bg-slate-800/40 p-2 px-2.5">
+        <input type="range" min="0" max="1" step="0.05" value="0.20" oninput="updateWeight('gammaLbl',this.value,'gamma')" class="w-full h-1 appearance-none bg-slate-700 rounded accent-primary cursor-pointer">
+      </div>
+      <div class="flex items-center justify-between rounded-lg hover:bg-slate-800/40 p-2.5 transition-colors">
+        <div class="flex items-center gap-2"><span class="material-symbols-outlined text-slate-500 text-sm">gavel</span><span class="text-xs font-medium text-slate-300">δ Compliance</span></div>
+        <span class="text-xs font-mono text-slate-400" id="deltaLbl">0.20</span>
+      </div>
+      <div class="rounded-lg bg-slate-800/40 p-2 px-2.5">
+        <input type="range" min="0" max="1" step="0.05" value="0.20" oninput="updateWeight('deltaLbl',this.value,'delta')" class="w-full h-1 appearance-none bg-slate-700 rounded accent-primary cursor-pointer">
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <h3 class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-3">System Stats</h3>
+    <div class="space-y-3">
+      <div class="space-y-1">
+        <div class="flex justify-between text-[11px] font-medium"><span class="text-slate-400">Node Load</span><span id="sysNodeLoad" class="text-slate-100">42%</span></div>
+        <div class="h-1 w-full bg-slate-800 rounded-full overflow-hidden"><div id="sysNodeLoadBar" class="h-full bg-primary rounded-full" style="width:42%"></div></div>
+      </div>
+      <div class="space-y-1">
+        <div class="flex justify-between text-[11px] font-medium"><span class="text-slate-400">Queue Depth</span><span id="sysQueue" class="text-slate-100">12ms</span></div>
+        <div class="h-1 w-full bg-slate-800 rounded-full overflow-hidden"><div id="sysQueueBar" class="h-full bg-green-500 rounded-full" style="width:8%"></div></div>
+      </div>
+      <div class="space-y-1">
+        <div class="flex justify-between text-[11px] font-medium"><span class="text-slate-400">Success Rate</span><span id="sysSuccess" class="text-green-400">100%</span></div>
+        <div class="h-1 w-full bg-slate-800 rounded-full overflow-hidden"><div class="h-full bg-green-500 rounded-full" style="width:100%"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <h3 class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-3">Engine Stats</h3>
+    <div class="space-y-2 text-[11px]">
+      <div class="flex justify-between"><span class="text-slate-400">Transactions</span><span id="statTxn" class="font-mono text-slate-100">8</span></div>
+      <div class="flex justify-between"><span class="text-slate-400">Volume</span><span id="statVol" class="font-mono text-slate-100">$21.5M</span></div>
+      <div class="flex justify-between"><span class="text-slate-400">Total Cost</span><span id="statCost" class="font-mono text-amber-400">$104,000</span></div>
+      <div class="flex justify-between"><span class="text-slate-400">CBDC Nodes</span><span class="font-mono text-slate-100">7</span></div>
+      <div class="flex justify-between"><span class="text-slate-400">Corridors</span><span class="font-mono text-slate-100">30</span></div>
+      <div class="flex justify-between"><span class="text-slate-400">Algorithm</span><span class="font-mono text-primary">Dijkstra</span></div>
+    </div>
+  </div>
+
+  <div class="mt-auto">
+    <div class="rounded-lg border border-border-dark bg-bg-dark p-3">
+      <div class="text-[10px] text-slate-500 uppercase tracking-widest mb-2">Node Status</div>
+      <div class="flex items-center gap-2"><div class="h-2 w-2 rounded-full bg-green-500"></div><div class="text-xs font-medium">Global Clearing Node</div></div>
+      <div class="text-[10px] text-slate-400 mt-1">All 7 nodes operational</div>
+      <div class="h-1 w-full bg-slate-800 rounded mt-2 overflow-hidden"><div class="h-full bg-green-500 rounded" style="width:100%"></div></div>
+    </div>
+    <button onclick="applyWeights()" class="mt-3 w-full flex items-center justify-center gap-2 rounded-lg bg-primary/10 border border-primary/20 py-2 text-xs font-semibold text-primary hover:bg-primary/20 transition-colors">
+      <span class="material-symbols-outlined text-sm">tune</span> Apply Changes
+    </button>
+  </div>
+</aside>
+
+<!-- MAIN CONTENT -->
+<main class="flex-1 overflow-y-auto bg-bg-dark">
+
+  <!-- METRICS BAR -->
+  <div class="grid grid-cols-6 border-b border-border-dark">
+    <div class="border-r border-border-dark p-4">
+      <div class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Total Transactions</div>
+      <div id="m_txn" class="text-2xl font-bold text-slate-100">8</div>
+      <div class="text-[10px] text-green-400 mt-1">+3 this session</div>
+    </div>
+    <div class="border-r border-border-dark p-4">
+      <div class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Success Rate</div>
+      <div id="m_success" class="text-2xl font-bold text-slate-100">100<span class="text-sm font-normal text-slate-400">%</span></div>
+      <div class="text-[10px] text-green-400 mt-1">Perfect record</div>
+    </div>
+    <div class="border-r border-border-dark p-4">
+      <div class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Total Volume</div>
+      <div id="m_vol" class="text-2xl font-bold text-slate-100">$21.5<span class="text-sm font-normal text-slate-400">M</span></div>
+      <div class="text-[10px] text-green-400 mt-1">↑ +8% vs baseline</div>
+    </div>
+    <div class="border-r border-border-dark p-4">
+      <div class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Avg Settlement Cost</div>
+      <div id="m_cost" class="text-2xl font-bold text-slate-100">13.0<span class="text-sm font-normal text-slate-400">bps</span></div>
+      <div class="text-[10px] text-slate-400 mt-1">→ Stable</div>
+    </div>
+    <div class="border-r border-border-dark p-4">
+      <div class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Avg Latency</div>
+      <div id="m_lat" class="text-2xl font-bold text-slate-100">40.1<span class="text-sm font-normal text-slate-400">s</span></div>
+      <div class="text-[10px] text-green-400 mt-1">↓ –2s vs avg</div>
+    </div>
+    <div class="p-4">
+      <div class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Active Corridors</div>
+      <div class="text-2xl font-bold text-slate-100">30</div>
+      <div class="text-[10px] text-slate-400 mt-1">7 CBDC nodes</div>
+    </div>
+  </div>
+
+  <!-- TAB: NETWORK -->
+  <div id="tab-network" class="panel active p-6 gap-6">
+    <div class="flex items-start justify-between">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-100">Global CBDC Network</h1>
+        <p class="text-sm text-slate-400 mt-1">Live settlement topology across 7 sovereign CBDC nodes and 30 bilateral corridors</p>
+      </div>
+      <div class="flex items-center gap-2 rounded-full bg-green-500/10 border border-green-500/20 px-3 py-1.5">
+        <span class="relative flex h-2 w-2"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span></span>
+        <span class="text-xs font-semibold text-green-400">Global Node Status: Stable</span>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-3 gap-5">
+      <div class="col-span-2 rounded-xl border border-border-dark bg-card-dark overflow-hidden">
+        <div class="flex items-center justify-between px-5 py-3 border-b border-border-dark">
+          <div class="flex items-center gap-2">
+            <span class="material-symbols-outlined text-primary text-lg">public</span>
+            <span class="text-sm font-semibold">Global CBDC Network Graph</span>
+          </div>
+          <div class="flex items-center gap-4 text-[10px] text-slate-400">
+            <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full bg-primary inline-block"></span>Active Route</span>
+            <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full bg-slate-500 inline-block"></span>Potential Route</span>
+            <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full bg-amber-400 inline-block"></span>Congested Node</span>
+          </div>
+        </div>
+        <svg id="networkSvg" class="w-full" style="height:360px"></svg>
+        <div class="px-5 py-3 border-t border-border-dark bg-bg-dark/50">
+          <div class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-2">Active Sovereign Nodes</div>
+          <div class="flex flex-wrap gap-2">
+            <span class="text-[11px] font-mono bg-primary/10 border border-primary/20 text-primary px-2.5 py-0.5 rounded">INR</span>
+            <span class="text-[11px] font-mono bg-primary/10 border border-primary/20 text-primary px-2.5 py-0.5 rounded">USD</span>
+            <span class="text-[11px] font-mono bg-slate-800 border border-border-dark text-slate-300 px-2.5 py-0.5 rounded">EUR</span>
+            <span class="text-[11px] font-mono bg-slate-800 border border-border-dark text-slate-300 px-2.5 py-0.5 rounded">GBP</span>
+            <span class="text-[11px] font-mono bg-slate-800 border border-border-dark text-slate-300 px-2.5 py-0.5 rounded">SGD</span>
+            <span class="text-[11px] font-mono bg-slate-800 border border-border-dark text-slate-300 px-2.5 py-0.5 rounded">CNY</span>
+            <span class="text-[11px] font-mono bg-slate-800 border border-border-dark text-slate-300 px-2.5 py-0.5 rounded">AED</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex flex-col gap-3 overflow-y-auto" style="max-height:460px">
+        <div class="text-xs font-bold text-slate-300 uppercase tracking-widest">Corridor Statistics</div>
+        <div id="corridorCards" class="flex flex-col gap-3"></div>
+      </div>
+    </div>
+
+    <!-- Health strip -->
+    <div class="grid grid-cols-5 gap-4">
+      <div class="rounded-xl border border-border-dark bg-card-dark p-4 text-center">
+        <div class="text-xl font-bold text-slate-100">7</div><div class="text-[10px] text-slate-400 uppercase tracking-widest mt-1">CBDC Nodes</div>
+      </div>
+      <div class="rounded-xl border border-border-dark bg-card-dark p-4 text-center">
+        <div class="text-xl font-bold text-slate-100">30</div><div class="text-[10px] text-slate-400 uppercase tracking-widest mt-1">Corridors</div>
+      </div>
+      <div class="rounded-xl border border-border-dark bg-card-dark p-4 text-center">
+        <div id="h_avgcost" class="text-xl font-bold text-amber-400">10.5</div><div class="text-[10px] text-slate-400 uppercase tracking-widest mt-1">Avg Cost bps</div>
+      </div>
+      <div class="rounded-xl border border-border-dark bg-card-dark p-4 text-center">
+        <div id="h_avglat" class="text-xl font-bold text-slate-100">38s</div><div class="text-[10px] text-slate-400 uppercase tracking-widest mt-1">Avg Latency</div>
+      </div>
+      <div class="rounded-xl border border-border-dark bg-card-dark p-4 text-center">
+        <div id="h_avgfr" class="text-xl font-bold text-green-400">0.133</div><div class="text-[10px] text-slate-400 uppercase tracking-widest mt-1">Avg Friction</div>
+      </div>
+    </div>
+
+    <div id="ledgerNetwork" class="rounded-xl border border-border-dark bg-card-dark overflow-hidden"></div>
+  </div>
+
+  <!-- TAB: ROUTE OPTIMIZER -->
+  <div id="tab-route" class="panel p-6 gap-6">
+    <div class="flex items-start justify-between">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-100">Transaction Route Optimizer</h1>
+        <p class="text-sm text-slate-400 mt-1">Real-time pathfinding via Dijkstra (α·cost + β·risk + γ·time + δ·compliance)</p>
+      </div>
+      <div class="flex items-center gap-2 rounded-full bg-green-500/10 border border-green-500/20 px-3 py-1.5">
+        <span class="relative flex h-2 w-2"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span></span>
+        <span class="text-xs font-semibold text-green-400">Global Node Status: Stable</span>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-4 gap-5">
+      <!-- Config panel -->
+      <div class="rounded-xl border border-border-dark bg-card-dark p-5 flex flex-col gap-4">
+        <div class="text-xs font-bold text-slate-300 uppercase tracking-widest">Transaction Config</div>
+        <div class="space-y-3">
+          <div>
+            <label class="block text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1.5">Source Currency (CBDC)</label>
+            <div class="relative">
+              <select id="rSrc" class="w-full appearance-none bg-bg-dark border border-border-dark rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-1 focus:ring-primary focus:outline-none cursor-pointer pr-8">
+                <option value="INR">🇮🇳 INR (Digital Rupee)</option>
+                <option value="USD">🇺🇸 USD (FedNow Node)</option>
+                <option value="EUR">🇪🇺 EUR (ECB Node)</option>
+                <option value="GBP">🇬🇧 GBP (BoE Node)</option>
+                <option value="SGD">🇸🇬 SGD (MAS Node)</option>
+                <option value="CNY">🇨🇳 CNY (e-CNY Node)</option>
+                <option value="AED">🇦🇪 AED (CBUAE Node)</option>
+              </select>
+              <span class="material-symbols-outlined absolute right-2 top-2 text-slate-400 text-base pointer-events-none">expand_more</span>
+            </div>
+          </div>
+          <div>
+            <label class="block text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1.5">Destination Currency</label>
+            <div class="relative">
+              <select id="rDst" class="w-full appearance-none bg-bg-dark border border-border-dark rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-1 focus:ring-primary focus:outline-none cursor-pointer pr-8">
+                <option value="INR">🇮🇳 INR (Digital Rupee)</option>
+                <option value="USD" selected>🇺🇸 USD (FedNow Node)</option>
+                <option value="EUR">🇪🇺 EUR (ECB Node)</option>
+                <option value="GBP">🇬🇧 GBP (BoE Node)</option>
+                <option value="SGD">🇸🇬 SGD (MAS Node)</option>
+                <option value="CNY">🇨🇳 CNY (e-CNY Node)</option>
+                <option value="AED">🇦🇪 AED (CBUAE Node)</option>
+              </select>
+              <span class="material-symbols-outlined absolute right-2 top-2 text-slate-400 text-base pointer-events-none">expand_more</span>
+            </div>
+          </div>
+          <div>
+            <label class="block text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1.5">Amount</label>
+            <div class="relative flex items-center">
+              <input id="rAmt" type="number" value="835000000" class="w-full bg-bg-dark border border-border-dark rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-1 focus:ring-primary focus:outline-none pr-16"/>
+              <span class="absolute right-3 text-xs font-mono text-slate-400" id="amtCcy">INR</span>
+            </div>
+          </div>
+          <div>
+            <label class="block text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1.5">Purpose Code</label>
+            <div class="relative">
+              <select id="purposeCode" class="w-full appearance-none bg-bg-dark border border-border-dark rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-1 focus:ring-primary focus:outline-none pr-8">
+                <option>Trade Settlement (T1)</option><option>Investment (I1)</option><option>Remittance (R1)</option>
+              </select>
+              <span class="material-symbols-outlined absolute right-2 top-2 text-slate-400 text-base pointer-events-none">expand_more</span>
+            </div>
+          </div>
+          <div>
+            <label class="block text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1.5">Entity Type</label>
+            <div class="relative">
+              <select id="entityType" class="w-full appearance-none bg-bg-dark border border-border-dark rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-1 focus:ring-primary focus:outline-none pr-8">
+                <option>Tier 1 Commercial Bank</option><option>Central Bank</option><option>Retail</option>
+              </select>
+              <span class="material-symbols-outlined absolute right-2 top-2 text-slate-400 text-base pointer-events-none">expand_more</span>
+            </div>
+          </div>
+          <div class="flex items-center justify-between rounded-lg bg-green-500/5 border border-green-500/15 p-3">
+            <div>
+              <div class="text-xs font-semibold text-slate-200">KYC/AML Level 3</div>
+              <div class="text-[10px] text-slate-400">Enhanced Due Diligence</div>
+            </div>
+            <div class="relative flex items-center">
+              <div class="w-10 h-5 rounded-full bg-primary flex items-center justify-end pr-0.5 cursor-pointer">
+                <div class="w-4 h-4 rounded-full bg-white shadow"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <button onclick="computeRoute()" class="w-full flex items-center justify-center gap-2 bg-primary hover:bg-blue-700 text-white text-sm font-bold rounded-lg py-2.5 transition-colors mt-auto">
+          <span class="material-symbols-outlined text-base">analytics</span> Recalculate Optimal Route
+        </button>
+      </div>
+
+      <!-- Network viz + results -->
+      <div class="col-span-2 flex flex-col gap-4">
+        <div class="rounded-xl border border-border-dark bg-card-dark overflow-hidden flex-1">
+          <svg id="routeNetSvg" class="w-full" style="height:280px"></svg>
+        </div>
+        <!-- Alt routes -->
+        <div class="rounded-xl border border-border-dark bg-card-dark overflow-hidden">
+          <div class="px-5 py-3 border-b border-border-dark">
+            <span class="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Alternative Route Comparison (K=3 Shortest Paths)</span>
+          </div>
+          <table class="w-full text-xs">
+            <thead class="border-b border-border-dark">
+              <tr class="text-slate-500 text-[10px] uppercase tracking-widest">
+                <th class="px-4 py-2.5 text-left font-bold">Route Path</th>
+                <th class="px-4 py-2.5 text-left font-bold">Est. Latency</th>
+                <th class="px-4 py-2.5 text-left font-bold">Liquidity Depth</th>
+                <th class="px-4 py-2.5 text-left font-bold">Total Fees</th>
+                <th class="px-4 py-2.5 text-left font-bold">Status</th>
+              </tr>
+            </thead>
+            <tbody id="altRoutes"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Analysis panel -->
+      <div class="flex flex-col gap-4">
+        <div class="text-xs font-bold text-slate-300 uppercase tracking-widest">Optimal Routing Analysis</div>
+        <div class="rounded-xl border border-primary/30 bg-primary/5 p-5 text-center">
+          <div class="text-[10px] uppercase tracking-widest font-bold text-primary mb-1">Composite Efficiency Score</div>
+          <div class="text-5xl font-bold text-primary" id="compScore">—</div>
+          <div class="text-[10px] text-slate-400 mt-2">F = α·Cost + β·Risk + γ·Time + δ·Compliance</div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div class="rounded-xl border border-border-dark bg-card-dark p-3">
+            <div class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Total Cost</div>
+            <div class="text-lg font-bold text-slate-100" id="resCost">—</div>
+            <div class="text-[10px] text-slate-400" id="resCostSub">—</div>
+          </div>
+          <div class="rounded-xl border border-border-dark bg-card-dark p-3">
+            <div class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Latency</div>
+            <div class="text-lg font-bold text-slate-100" id="resLat">—</div>
+            <div class="text-[10px] text-slate-400">Settlement time</div>
+          </div>
+          <div class="rounded-xl border border-border-dark bg-card-dark p-3 col-span-2">
+            <div class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">FX Risk Score</div>
+            <div class="text-lg font-bold text-green-400" id="resRisk">—</div>
+            <div class="h-1.5 w-full bg-slate-700 rounded-full mt-2 overflow-hidden"><div class="h-full bg-green-500 rounded-full liq-bar" id="riskBar" style="width:0%"></div></div>
+          </div>
+          <div class="rounded-xl border border-border-dark bg-card-dark p-3 col-span-2">
+            <div class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Compliance Penalty</div>
+            <div class="text-lg font-bold" id="resComp">—</div>
+            <div class="text-[10px] text-slate-400" id="resCompSub">—</div>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-border-dark bg-card-dark overflow-hidden">
+          <div class="flex items-center justify-between px-4 py-3 border-b border-border-dark">
+            <span class="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Live Settlement Ledger</span>
+            <span class="relative flex h-2 w-2"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span></span>
+          </div>
+          <div id="miniLedger" class="p-3 space-y-2"></div>
+        </div>
+
+        <button onclick="executeSettlement()" class="w-full bg-white text-slate-900 text-sm font-black uppercase tracking-widest rounded-xl py-3 hover:bg-slate-100 transition-colors">
+          Execute Settlement
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB: FX RISK -->
+  <div id="tab-fx" class="panel p-6 gap-6">
+    <div class="flex items-start justify-between">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-100">FX Risk Heatmap</h1>
+        <p class="text-sm text-slate-400 mt-1">EWMA realized volatility blended with AR(1) 24h forecast — risk_score = clip(ewma_vol/0.30, tier_floor, 1)</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <button class="text-[10px] font-bold uppercase tracking-widest bg-primary/10 border border-primary/30 text-primary px-3 py-1.5 rounded-lg">Heatmap</button>
+        <button class="text-[10px] font-bold uppercase tracking-widest bg-transparent border border-border-dark text-slate-400 px-3 py-1.5 rounded-lg hover:border-primary/30 hover:text-primary transition-colors">Global Risk</button>
+        <button class="text-[10px] font-bold uppercase tracking-widest bg-transparent border border-border-dark text-slate-400 px-3 py-1.5 rounded-lg hover:border-primary/30 hover:text-primary transition-colors">Risk Pairs</button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-3 gap-5">
+      <div class="col-span-2 rounded-xl border border-border-dark bg-card-dark overflow-hidden">
+        <div class="px-5 py-4 border-b border-border-dark flex items-center justify-between">
+          <div>
+            <div class="text-sm font-bold text-slate-100">Cross-Currency Risk Matrix</div>
+            <div class="text-[10px] text-slate-400 mt-0.5">EWMA realized vol blended with AR(1) 24h forecast (60%/40% blend)</div>
+          </div>
+          <div class="flex items-center gap-3 text-[10px] text-slate-400">
+            <span class="flex items-center gap-1"><span class="h-2 w-2 rounded bg-green-500 inline-block"></span>Low</span>
+            <span class="flex items-center gap-1"><span class="h-2 w-2 rounded bg-amber-400 inline-block"></span>Mod</span>
+            <span class="flex items-center gap-1"><span class="h-2 w-2 rounded bg-orange-500 inline-block"></span>High</span>
+          </div>
+        </div>
+        <div class="p-5">
+          <div id="heatmapGrid"></div>
+        </div>
+      </div>
+
+      <div class="flex flex-col gap-4">
+        <div class="rounded-xl border border-border-dark bg-card-dark overflow-hidden">
+          <div class="flex items-center justify-between px-4 py-3 border-b border-border-dark">
+            <span class="text-sm font-bold text-slate-100">High Risk Pairs</span>
+            <span class="material-symbols-outlined text-red-400 text-base">warning</span>
+          </div>
+          <div id="highRiskPairs" class="p-3 space-y-2 overflow-y-auto" style="max-height:280px"></div>
+          <div class="px-4 py-3 border-t border-border-dark">
+            <button class="w-full text-center text-xs font-semibold text-slate-400 hover:text-primary transition-colors py-1 bg-slate-800/50 rounded-lg">View All Risk Pairs</button>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-border-dark bg-card-dark overflow-hidden">
+          <div class="px-4 py-3 border-b border-border-dark"><span class="text-sm font-bold text-slate-100">Volatility Regimes</span></div>
+          <div class="p-4 flex flex-col items-center">
+            <svg id="volDonut" width="140" height="140" class="mb-3"></svg>
+            <div class="w-full space-y-2">
+              <div class="flex items-center justify-between text-xs"><span class="flex items-center gap-2"><span class="h-2 w-2 rounded-full bg-green-500 inline-block"></span>Low Volatility</span><span id="volLow" class="font-semibold text-slate-100">16 pairs (38%)</span></div>
+              <div class="flex items-center justify-between text-xs"><span class="flex items-center gap-2"><span class="h-2 w-2 rounded-full bg-amber-400 inline-block"></span>Medium Volatility</span><span id="volMed" class="font-semibold text-slate-100">26 pairs (62%)</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="rounded-xl border border-border-dark bg-card-dark overflow-hidden">
+      <div class="flex items-center justify-between px-5 py-3 border-b border-border-dark">
+        <span class="text-sm font-bold text-slate-100">Live Settlement Ledger</span>
+        <span class="text-[10px] font-bold text-primary uppercase tracking-widest">Real-time Feed</span>
+      </div>
+      <div id="fxLedger"></div>
+    </div>
+  </div>
+
+  <!-- TAB: LIQUIDITY -->
+  <div id="tab-liquidity" class="panel p-6 gap-6">
+    <div class="flex items-start justify-between">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-100">Liquidity Monitoring System</h1>
+        <p class="text-sm text-slate-400 mt-1">BIS PFMI Principle 7 compliant — corridor &amp; node pool tracking with intraday recycling</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <button class="flex items-center gap-2 border border-border-dark text-slate-400 hover:text-primary hover:border-primary/30 text-xs font-semibold rounded-lg px-3 py-2 transition-colors">
+          <span class="material-symbols-outlined text-sm">download</span> Export Data
+        </button>
+        <button onclick="injectLiquidity()" class="flex items-center gap-2 bg-primary text-white text-xs font-bold rounded-lg px-3 py-2 hover:bg-blue-700 transition-colors">
+          <span class="material-symbols-outlined text-sm">water_drop</span> Inject Liquidity
+        </button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-4 gap-4">
+      <div class="rounded-xl border border-border-dark bg-card-dark p-4">
+        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Total Network Liquidity<span class="text-green-400 ml-1">+2.4%</span></div>
+        <div id="liq_total" class="text-2xl font-bold text-slate-100">$175.0<span class="text-sm font-normal text-slate-400">B</span></div>
+        <div class="h-1 w-full bg-slate-800 rounded-full mt-2 overflow-hidden"><div class="h-full bg-primary rounded-full" style="width:70%"></div></div>
+      </div>
+      <div class="rounded-xl border border-border-dark bg-card-dark p-4">
+        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Active CBDC Nodes</div>
+        <div class="text-2xl font-bold text-slate-100">7</div>
+        <div class="text-[10px] text-green-400 mt-1">All operational clusters green</div>
+      </div>
+      <div class="rounded-xl border border-border-dark bg-card-dark p-4">
+        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Avg Utilization<span class="text-amber-400 ml-1" id="liq_avgutil">74.2%</span></div>
+        <div class="text-2xl font-bold text-amber-400">High Capacity</div>
+        <div class="h-1 w-full bg-slate-800 rounded-full mt-2 overflow-hidden"><div id="liq_utilbar" class="h-full bg-amber-400 rounded-full" style="width:74%"></div></div>
+      </div>
+      <div class="rounded-xl border border-border-dark bg-card-dark p-4">
+        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">24H Settlement Vol<span class="text-green-400 ml-1">+5.8%</span></div>
+        <div class="text-2xl font-bold text-slate-100">$21.5<span class="text-sm font-normal text-slate-400">M</span></div>
+        <div class="text-[10px] text-slate-400 mt-1">Session record volume</div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-3 gap-5">
+      <div class="col-span-2 rounded-xl border border-border-dark bg-card-dark overflow-hidden">
+        <div class="flex items-center justify-between px-5 py-4 border-b border-border-dark">
+          <div class="text-sm font-bold text-slate-100">Node Liquidity Levels (Global Distribution)</div>
+          <div class="flex items-center gap-4 text-[10px] text-slate-400">
+            <span class="flex items-center gap-1"><span class="h-2 w-2 rounded bg-primary inline-block"></span>Available</span>
+            <span class="flex items-center gap-1"><span class="h-2 w-2 rounded bg-slate-600 inline-block"></span>Reserved</span>
+          </div>
+        </div>
+        <div class="p-5" id="liqBarsContainer"></div>
+      </div>
+
+      <div class="rounded-xl border border-border-dark bg-card-dark overflow-hidden">
+        <div class="px-4 py-3.5 border-b border-border-dark"><div class="text-sm font-bold text-slate-100">Capacity Warnings</div></div>
+        <div class="p-3 space-y-2" id="liqWarnings">
+          <div class="rounded-lg bg-red-500/10 border border-red-500/20 p-3">
+            <div class="text-[10px] font-bold text-red-400 uppercase tracking-widest mb-1">Critical Low Capacity</div>
+            <div class="text-xs font-semibold text-slate-200">CNY→SGD Corridor</div>
+            <div class="text-[10px] text-slate-400">Available: $2.5B | Reserved: $350M</div>
+          </div>
+          <div class="rounded-lg bg-amber-500/10 border border-amber-500/20 p-3">
+            <div class="text-[10px] font-bold text-amber-400 uppercase tracking-widest mb-1">Congestion Warning</div>
+            <div class="text-xs font-semibold text-slate-200">USD→CNY Corridor</div>
+            <div class="text-[10px] text-slate-400">Utilization reached 35% of capacity</div>
+          </div>
+          <div class="rounded-lg bg-blue-500/10 border border-blue-500/20 p-3">
+            <div class="text-[10px] font-bold text-primary uppercase tracking-widest mb-1">Injection Required</div>
+            <div class="text-xs font-semibold text-slate-200">INR→EUR Rebalancing</div>
+            <div class="text-[10px] text-slate-400">Liquidity drift detected &gt; 15%</div>
+          </div>
+          <button class="w-full text-xs font-bold uppercase tracking-widest text-slate-400 hover:text-primary transition-colors bg-slate-800/50 rounded-lg py-2 mt-1">View All Warnings</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="rounded-xl border border-border-dark bg-card-dark overflow-hidden">
+      <div class="flex items-center justify-between px-5 py-3 border-b border-border-dark">
+        <span class="text-sm font-bold text-slate-100">Regional Node Liquidity Analysis</span>
+        <span class="text-[10px] text-slate-400" id="liqRefreshTimer">Auto-refresh in 5s ↺</span>
+      </div>
+      <table class="w-full text-xs">
+        <thead class="border-b border-border-dark">
+          <tr class="text-slate-500 text-[10px] uppercase tracking-widest">
+            <th class="px-5 py-2.5 text-left font-bold">Node ID</th>
+            <th class="px-5 py-2.5 text-left font-bold">Primary Asset</th>
+            <th class="px-5 py-2.5 text-left font-bold">Total Liquidity</th>
+            <th class="px-5 py-2.5 text-left font-bold">Utilization</th>
+            <th class="px-5 py-2.5 text-left font-bold">Efficiency Score</th>
+            <th class="px-5 py-2.5 text-left font-bold">Status</th>
+          </tr>
+        </thead>
+        <tbody id="nodeLiqTable"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- TAB: STRESS TESTING -->
+  <div id="tab-stress" class="panel p-6 gap-6">
+    <div class="flex items-start justify-between">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-100">Monte Carlo Stress Testing Engine</h1>
+        <p class="text-sm text-slate-400 mt-1">Run high-fidelity simulations for FX shocks, liquidity droughts, network congestion &amp; systemic crises</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <button class="flex items-center gap-2 border border-border-dark text-slate-400 text-xs font-semibold rounded-lg px-3 py-2 hover:border-primary/30 hover:text-primary transition-colors">
+          <span class="material-symbols-outlined text-sm">save</span> Export Model
+        </button>
+        <button onclick="runStress(this)" class="flex items-center gap-2 bg-primary text-white text-xs font-bold rounded-lg px-4 py-2 hover:bg-blue-700 transition-colors">
+          <span class="material-symbols-outlined text-sm">play_arrow</span> Execute Simulation
+        </button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-4 gap-4">
+      <div class="rounded-xl border border-border-dark bg-card-dark p-4">
+        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Success Rate</div>
+        <div id="str_success" class="text-3xl font-bold text-green-400">98.5%</div>
+        <div class="text-[10px] text-slate-400 mt-1">↑ Above Threshold</div>
+      </div>
+      <div class="rounded-xl border border-border-dark bg-card-dark p-4">
+        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Cost-at-Risk (VaR-95)</div>
+        <div id="str_var" class="text-3xl font-bold text-slate-100">$13.0K</div>
+        <div class="text-[10px] text-amber-400 mt-1" id="str_varSub">▲ +12% vs Baseline</div>
+      </div>
+      <div class="rounded-xl border border-border-dark bg-card-dark p-4">
+        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Avg Latency</div>
+        <div id="str_lat" class="text-3xl font-bold text-slate-100">40.1<span class="text-lg font-normal text-slate-400">s</span></div>
+        <div class="text-[10px] text-slate-400 mt-1">P99: 90s max</div>
+      </div>
+      <div class="rounded-xl border border-border-dark bg-card-dark p-4">
+        <div class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Resilience Score</div>
+        <div id="str_res" class="text-3xl font-bold text-primary">A+</div>
+        <div class="text-[10px] text-slate-400 mt-1">● Systemic Robust</div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-4 gap-5">
+      <div class="flex flex-col gap-4">
+        <div class="rounded-xl border border-border-dark bg-card-dark p-4">
+          <div class="flex items-center gap-2 mb-4">
+            <span class="material-symbols-outlined text-primary text-base">tune</span>
+            <span class="text-xs font-bold text-slate-100 uppercase tracking-widest">Parameters</span>
+          </div>
+          <div class="space-y-3">
+            <div>
+              <label class="block text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1.5">Source Node</label>
+              <div class="relative"><select id="stressSrc" class="w-full appearance-none bg-bg-dark border border-border-dark rounded-lg px-3 py-2 text-xs text-slate-100 focus:ring-1 focus:ring-primary focus:outline-none pr-7"><option>INR-NODE-01</option><option>USD-NODE-01</option><option>EUR-NODE-01</option></select><span class="material-symbols-outlined absolute right-2 top-2 text-slate-400 text-sm pointer-events-none">expand_more</span></div>
+            </div>
+            <div>
+              <label class="block text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1.5">Destination Group</label>
+              <div class="relative"><select id="stressDst" class="w-full appearance-none bg-bg-dark border border-border-dark rounded-lg px-3 py-2 text-xs text-slate-100 focus:ring-1 focus:ring-primary focus:outline-none pr-7"><option>Global G-SIBs</option><option>APAC Nodes</option><option>EU Cluster</option></select><span class="material-symbols-outlined absolute right-2 top-2 text-slate-400 text-sm pointer-events-none">expand_more</span></div>
+            </div>
+            <div>
+              <label class="block text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1.5">Transaction Size VAR</label>
+              <div class="flex items-center gap-2"><input id="stressVar" type="range" min="0" max="100" value="95" class="flex-1 h-1 appearance-none bg-slate-700 rounded accent-primary cursor-pointer" oninput="this.nextElementSibling.textContent=this.value+'%'"><span class="text-xs font-mono text-primary w-8">95%</span></div>
+            </div>
+            <div>
+              <label class="block text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1.5">Monte Carlo Trials</label>
+              <div class="relative"><select id="stressTrials" class="w-full appearance-none bg-bg-dark border border-border-dark rounded-lg px-3 py-2 text-xs text-slate-100 focus:ring-1 focus:ring-primary focus:outline-none pr-7"><option>100 Cycles</option><option>500 Cycles</option><option selected>1,000 Cycles</option><option>2,000 Cycles</option></select><span class="material-symbols-outlined absolute right-2 top-2 text-slate-400 text-sm pointer-events-none">expand_more</span></div>
+            </div>
+            <div class="space-y-2">
+              <label class="flex items-center gap-2 text-xs text-slate-300 cursor-pointer"><div class="w-4 h-4 rounded bg-primary flex items-center justify-center"><span class="material-symbols-outlined text-white text-xs">check</span></div>Include Liquidity Contagion</label>
+              <label class="flex items-center gap-2 text-xs text-slate-400 cursor-pointer"><div class="w-4 h-4 rounded border border-border-dark bg-bg-dark"></div>Network Latency Jitter</label>
+            </div>
+          </div>
+        </div>
+        <div class="rounded-xl border border-border-dark bg-card-dark p-4">
+          <div class="flex items-center gap-2 mb-3">
+            <span class="material-symbols-outlined text-amber-400 text-base">warning</span>
+            <span class="text-xs font-bold text-slate-100 uppercase tracking-widest">Scenario Presets</span>
+          </div>
+          <div class="space-y-1.5" id="scenarioPresets">
+            <button onclick="loadScenario('fx_shock_severe')" class="w-full text-left text-xs text-slate-300 hover:text-slate-100 hover:bg-slate-800/50 rounded-lg px-3 py-2 transition-colors">Flash Liquidity Crunch</button>
+            <button onclick="loadScenario('systemic_shock')" class="w-full text-left text-xs text-slate-300 hover:text-slate-100 hover:bg-slate-800/50 rounded-lg px-3 py-2 transition-colors">Systemic Default Spike</button>
+            <button onclick="loadScenario('baseline')" class="w-full text-left text-xs font-semibold text-primary bg-primary/10 border border-primary/20 rounded-lg px-3 py-2">Base Case Performance</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-span-3 rounded-xl border border-border-dark bg-card-dark overflow-hidden">
+        <div class="flex items-center justify-between px-5 py-4 border-b border-border-dark">
+          <div>
+            <div class="text-sm font-bold text-slate-100">Scenario Comparison Matrix</div>
+            <div class="text-[10px] text-slate-400 mt-0.5">Cost VaR-95 (bps) vs Success Rate — Monte Carlo results</div>
+          </div>
+          <div class="flex items-center gap-4 text-[10px]">
+            <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full bg-primary inline-block"></span>Baseline</span>
+            <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full bg-red-500 inline-block"></span>Stress Tier 1</span>
+          </div>
+        </div>
+        <div class="p-5" id="stressChartContainer"></div>
+      </div>
+    </div>
+
+    <div class="rounded-xl border border-border-dark bg-card-dark overflow-hidden">
+      <div class="flex items-center justify-between px-5 py-3 border-b border-border-dark">
+        <div class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-sm">receipt_long</span><span class="text-sm font-bold text-slate-100">Live Stress-Response Ledger</span></div>
+        <div class="flex items-center gap-3">
+          <span class="flex items-center gap-1.5 text-[10px] text-green-400 font-semibold"><span class="h-2 w-2 rounded-full bg-green-500 animate-pulse inline-block"></span>Streaming Data</span>
+          <button class="text-[10px] font-bold text-primary uppercase tracking-widest hover:underline">View All</button>
+        </div>
+      </div>
+      <div id="stressLedger"></div>
+    </div>
+  </div>
+
+</main>
+</div>
+</div>
+
+<!-- Tooltip -->
+<div class="node-tooltip" id="tooltip"></div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════
+   BACKEND ENGINE (Python → JavaScript port)
+   Mirrors: cbdc_network.py, clearing_engine.py, risk_model.py,
+            liquidity_manager.py, stress_testing.py
+════════════════════════════════════════════════════════════════ */
+
+// ── 1. CBDC NETWORK (cbdc_network.py) ──────────────────────────
+const CCY = ['USD','EUR','GBP','INR','SGD','CNY','AED'];
+const FLAGS = {USD:'🇺🇸',EUR:'🇪🇺',GBP:'🇬🇧',INR:'🇮🇳',SGD:'🇸🇬',CNY:'🇨🇳',AED:'🇦🇪'};
+const COLORS = {USD:'#2563EB',EUR:'#7C3AED',GBP:'#0891b2',INR:'#d97706',SGD:'#dc2626',CNY:'#be185d',AED:'#059669'};
+
+// Nodes: [currency, cb_credibility, gdp_usd_trillion, aml_risk_rating, daily_vol_cap_usd_m]
+const NODES_META = {
+  USD:{credibility:0.99, gdp:26.9, aml:0, cap:80000},
+  EUR:{credibility:0.97, gdp:17.1, aml:0, cap:65000},
+  GBP:{credibility:0.95, gdp:3.1,  aml:0, cap:35000},
+  INR:{credibility:0.85, gdp:3.7,  aml:0, cap:25000},
+  SGD:{credibility:0.98, gdp:0.5,  aml:0, cap:15000},
+  CNY:{credibility:0.80, gdp:17.7, aml:1, cap:45000},
+  AED:{credibility:0.90, gdp:0.5,  aml:0, cap:20000},
+};
+
+// Edges: [src, tgt, fx_rate, cost_bps, latency_s, liquidity_m, friction, pvp]
+const EDGES_RAW = [
+  ['INR','USD',0.01198,12,45,8000,0.10,true],
+  ['USD','INR',83.5,  10,40,8000,0.10,true],
+  ['USD','EUR',0.920,  6,20,15000,0.05,true],
+  ['EUR','USD',1.087,  6,20,15000,0.05,true],
+  ['USD','GBP',0.790,  7,22,12000,0.05,true],
+  ['GBP','USD',1.266,  7,22,12000,0.05,true],
+  ['USD','SGD',1.340,  8,25,6000, 0.05,true],
+  ['SGD','USD',0.746,  8,25,6000, 0.05,true],
+  ['USD','CNY',7.240, 18,60,5000, 0.35,false],
+  ['CNY','USD',0.138, 18,60,5000, 0.35,false],
+  ['USD','AED',3.671,  5,15,10000,0.08,true],
+  ['AED','USD',0.272,  5,15,10000,0.08,true],
+  ['EUR','GBP',0.859,  6,18,10000,0.06,true],
+  ['GBP','EUR',1.164,  6,18,10000,0.06,true],
+  ['EUR','SGD',1.457,  9,28,5000, 0.08,true],
+  ['SGD','EUR',0.686,  9,28,5000, 0.08,true],
+  ['INR','SGD',0.01605,10,35,4000,0.12,true],
+  ['SGD','INR',62.31, 10,35,4000, 0.12,true],
+  ['AED','INR',22.74,  8,20,5000, 0.10,true],
+  ['INR','AED',0.04397, 8,20,5000,0.10,true],
+  ['CNY','AED',0.507, 15,50,3000, 0.28,false],
+  ['AED','CNY',1.972, 15,50,3000, 0.28,false],
+  ['INR','EUR',0.01106,14,55,4500,0.15,true],
+  ['EUR','INR',90.44, 14,55,4500, 0.15,true],
+  ['SGD','CNY',5.403, 20,70,2500, 0.32,false],
+  ['CNY','SGD',0.185, 20,70,2500, 0.32,false],
+  ['GBP','INR',105.7, 13,50,3500, 0.14,true],
+  ['INR','GBP',0.00946,13,50,3500,0.14,true],
+  ['AED','EUR',0.2504, 9,30,4000, 0.09,true],
+  ['EUR','AED',3.992,  9,30,4000, 0.09,true],
+];
+
+// Build adjacency: graph[src][tgt] = {fx,cost,lat,liq,friction,pvp}
+let GRAPH = {};
+function buildGraph(dynamicFx = {}) {
+  GRAPH = {};
+  for(const e of EDGES_RAW) {
+    const [src,tgt,fx0,cost,lat,liq,friction,pvp] = e;
+    if(!GRAPH[src]) GRAPH[src] = {};
+    const fxKey = `${src}/${tgt}`;
+    GRAPH[src][tgt] = {
+      fx: dynamicFx[fxKey] !== undefined ? dynamicFx[fxKey] : fx0,
+      cost, lat, liq, friction, pvp
+    };
+  }
+}
+buildGraph();
+
+// ── 2. FX RISK MODEL (risk_model.py) ───────────────────────────
+// Risk tiers (from RISK_TIERS constant in risk_model.py)
+const RISK_TIERS = {
+  MAJOR:   ['USD/EUR','EUR/USD','USD/GBP','GBP/USD'],
+  CROSS:   ['EUR/GBP','GBP/EUR','USD/SGD','SGD/USD','EUR/SGD','SGD/EUR','USD/AED','AED/USD'],
+  EM:      ['USD/INR','INR/USD','EUR/INR','INR/EUR','GBP/INR','INR/GBP','AED/INR','INR/AED','SGD/INR','INR/SGD'],
+  MANAGED: ['USD/CNY','CNY/USD','SGD/CNY','CNY/SGD','AED/CNY','CNY/AED'],
+};
+const TIER_FLOOR = {MAJOR:0.02, CROSS:0.04, EM:0.08, MANAGED:0.06};
+const VOL_CEILING = 0.30;
+
+function getRiskTier(pair) {
+  for(const [tier, pairs] of Object.entries(RISK_TIERS)) {
+    if(pairs.includes(pair)) return tier;
+  }
+  return 'CROSS';
+}
+
+// Simulate EWMA + AR(1) blend (60/40) — derived from risk_model.py
+// Base vols derived from the corridor friction and AML tier of each pair
+function computeRiskScore(src, tgt) {
+  if(src === tgt) return 0;
+  const pair = `${src}/${tgt}`;
+  const tier = getRiskTier(pair);
+  const floor = TIER_FLOOR[tier] || 0.04;
+  const edge = GRAPH[src] && GRAPH[src][tgt];
+  if(!edge) return floor;
+  // Simulate EWMA vol from friction + AML risk of destination node
+  const amlPenalty = NODES_META[tgt].aml * 0.08;
+  const ewmaVol = edge.friction * 0.5 + amlPenalty + floor;
+  // AR(1) forecast ~ adds slight momentum (±10% of EWMA)
+  const arForecast = ewmaVol * (1 + (Math.sin(src.charCodeAt(0) + tgt.charCodeAt(0)) * 0.1));
+  // Blend: 60% EWMA + 40% AR
+  const blended = 0.60 * ewmaVol + 0.40 * arForecast;
+  return Math.min(Math.max(blended, floor), 1.0);
+}
+
+// Build full risk matrix
+let RISK_MATRIX = {};
+function buildRiskMatrix() {
+  RISK_MATRIX = {};
+  for(const s of CCY) {
+    RISK_MATRIX[s] = {};
+    for(const t of CCY) {
+      RISK_MATRIX[s][t] = computeRiskScore(s, t);
+    }
+  }
+}
+buildRiskMatrix();
+
+// ── 3. ROUTING WEIGHTS (clearing_engine.py RoutingWeights) ─────
+let WEIGHTS = { alpha:0.35, beta:0.25, gamma:0.20, delta:0.20 };
+
+// Normalization bounds (from clearing_engine.py NORM constant)
+const NORM = {
+  cost: [5.0, 25.0],
+  lat:  [15.0, 120.0],
+  friction: [0.0, 1.0],
+  risk: [0.0, 1.0],
+};
+
+function normalize(v, lo, hi) {
+  if(hi === lo) return 0;
+  return Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+}
+
+// Composite weight for a single corridor edge
+function compositeWeight(src, tgt, amountUsd = 1.0) {
+  const e = GRAPH[src] && GRAPH[src][tgt];
+  if(!e) return Infinity;
+  if(e.liq < amountUsd) return Infinity; // liquidity feasibility check
+  const risk = RISK_MATRIX[src][tgt];
+  return (
+    WEIGHTS.alpha * normalize(e.cost,     NORM.cost[0],     NORM.cost[1]) +
+    WEIGHTS.beta  * normalize(risk,       NORM.risk[0],     NORM.risk[1]) +
+    WEIGHTS.gamma * normalize(e.lat,      NORM.lat[0],      NORM.lat[1]) +
+    WEIGHTS.delta * normalize(e.friction, NORM.friction[0], NORM.friction[1])
+  );
+}
+
+// ── 4. DIJKSTRA (clearing_engine.py find_optimal_route) ────────
+function dijkstra(src, dst, amountUsd = 1.0) {
+  const dist = {}, prev = {}, visited = new Set();
+  for(const n of CCY) dist[n] = Infinity;
+  dist[src] = 0;
+  const queue = new Set(CCY);
+
+  while(queue.size > 0) {
+    // Get unvisited node with min dist
+    let u = null;
+    for(const n of queue) {
+      if(u === null || dist[n] < dist[u]) u = n;
+    }
+    if(u === dst || dist[u] === Infinity) break;
+    queue.delete(u);
+    visited.add(u);
+
+    if(!GRAPH[u]) continue;
+    for(const v of Object.keys(GRAPH[u])) {
+      if(visited.has(v)) continue;
+      const w = compositeWeight(u, v, amountUsd);
+      const alt = dist[u] + w;
+      if(alt < dist[v]) {
+        dist[v] = alt;
+        prev[v] = u;
+      }
+    }
+  }
+
+  if(dist[dst] === Infinity) return null;
+  // Reconstruct path
+  const path = [];
+  let cur = dst;
+  while(cur !== undefined) { path.unshift(cur); cur = prev[cur]; }
+  return path;
+}
+
+// K shortest simple paths (Yen's-style — enumerate then rank)
+function kShortestPaths(src, dst, k = 3, amountUsd = 1.0) {
+  const results = [];
+  const paths = [];
+  // BFS/DFS to enumerate simple paths up to length 4
+  function dfs(node, path, visited) {
+    if(node === dst) { paths.push([...path]); return; }
+    if(path.length >= 4) return;
+    if(!GRAPH[node]) return;
+    for(const next of Object.keys(GRAPH[node])) {
+      if(!visited.has(next)) {
+        visited.add(next);
+        path.push(next);
+        dfs(next, path, visited);
+        path.pop();
+        visited.delete(next);
+      }
+    }
+  }
+  const v0 = new Set([src]);
+  dfs(src, [src], v0);
+
+  // Score each path
+  for(const p of paths) {
+    const metrics = evaluatePath(p, amountUsd);
+    if(metrics.feasible) results.push(metrics);
+  }
+  results.sort((a, b) => a.composite - b.composite);
+  return results.slice(0, k);
+}
+
+// Evaluate a full path and return route metrics
+function evaluatePath(path, amountUsd = 1.0) {
+  let totalCost = 0, totalLat = 0, totalRisk = 0, totalFriction = 0;
+  let composite = 0, fxRate = 1.0;
+  let feasible = true;
+  for(let i = 0; i < path.length - 1; i++) {
+    const s = path[i], t = path[i+1];
+    const e = GRAPH[s] && GRAPH[s][t];
+    if(!e || e.liq < amountUsd) { feasible = false; break; }
+    totalCost     += e.cost;
+    totalLat      += e.lat;
+    totalFriction += e.friction;
+    totalRisk     += RISK_MATRIX[s][t];
+    fxRate        *= e.fx;
+    composite     += compositeWeight(s, t, amountUsd);
+  }
+  const hops = path.length - 1;
+  const avgRisk = hops > 0 ? totalRisk / hops : 0;
+  const avgFriction = hops > 0 ? totalFriction / hops : 0;
+  const estCostUsd = amountUsd * 1000 * (totalCost / 10000);
+  // Efficiency score: inverse composite, scaled 0-100
+  const effScore = feasible ? Math.max(0, 100 - composite * 100).toFixed(1) : '—';
+  return {
+    path, feasible, composite,
+    totalCost, totalLat, avgRisk, avgFriction,
+    fxRate, estCostUsd, effScore,
+    compStatus: avgFriction > 0.25 ? 'FLAGGED' : 'APPROVED',
+    compPenalty: avgFriction > 0.25 ? avgFriction : 0,
+  };
+}
+
+// ── 5. LIQUIDITY MANAGER (liquidity_manager.py) ─────────────────
+// Node pool state — mirrors LiquidityManager.NODE_POOLS
+let NODE_POOLS = {
+  USD:{available:50000, minimum:10000, capacity:80000, recycling:0.85},
+  EUR:{available:40000, minimum:8000,  capacity:65000, recycling:0.85},
+  GBP:{available:20000, minimum:4000,  capacity:35000, recycling:0.85},
+  INR:{available:15000, minimum:3000,  capacity:25000, recycling:0.85},
+  SGD:{available:8000,  minimum:1500,  capacity:15000, recycling:0.85},
+  CNY:{available:25000, minimum:5000,  capacity:45000, recycling:0.85},
+  AED:{available:12000, minimum:2000,  capacity:20000, recycling:0.85},
+};
+
+function getNodeUtilization(ccy) {
+  const p = NODE_POOLS[ccy];
+  return (1 - p.available / p.capacity) * 100;
+}
+function getNodeHeadroom(ccy) {
+  const p = NODE_POOLS[ccy];
+  return Math.max(0, p.available - p.minimum);
+}
+function canNodeFund(ccy, amount) {
+  return getNodeHeadroom(ccy) >= amount;
+}
+// Inject liquidity — increases all pool levels by 10%
+function injectLiquidity() {
+  for(const ccy of CCY) {
+    const p = NODE_POOLS[ccy];
+    p.available = Math.min(p.capacity, p.available * 1.10);
+  }
+  buildLiqBars();
+  buildNodeLiqTable();
+  updateSidebarStats();
+}
+
+// ── 6. COMPLIANCE ENGINE (compliance_engine.py) ─────────────────
+const HIGH_RISK_CORRIDORS = [
+  ['CNY','USD'],['USD','CNY'],['CNY','EUR'],['EUR','CNY'],
+  ['CNY','GBP'],['GBP','CNY'],['CNY','SGD'],['SGD','CNY'],
+];
+const EDD_CORRIDORS = [
+  ['INR','AED'],['AED','INR'],['AED','CNY'],['CNY','AED'],['SGD','CNY'],['CNY','SGD'],
+];
+const REPORTING_THRESHOLDS = {USD:10000,EUR:10000,GBP:9000,INR:50000,SGD:20000,CNY:50000,AED:55000};
+
+function checkCompliance(path, amountUsd) {
+  let flags = [], penalty = 0;
+  const corridors = [];
+  for(let i=0;i<path.length-1;i++) corridors.push([path[i],path[i+1]]);
+
+  for(const [s,t] of corridors) {
+    if(HIGH_RISK_CORRIDORS.some(([a,b])=>a===s&&b===t)) {
+      flags.push('HIGH_RISK_CORRIDOR'); penalty += 0.35;
+    } else if(EDD_CORRIDORS.some(([a,b])=>a===s&&b===t)) {
+      flags.push('EDD_REQUIRED'); penalty += 0.10;
+    }
+  }
+  // Large-value threshold check
+  const thresh = REPORTING_THRESHOLDS[path[0]] || 10000;
+  if(amountUsd > thresh) flags.push('LARGE_VALUE');
+
+  const status = flags.includes('HIGH_RISK_CORRIDOR') ? 'FLAGGED_FOR_REVIEW' : 'APPROVED';
+  return { status, flags, penalty: Math.min(penalty, 1.0) };
+}
+
+// ── 7. SETTLEMENT SIMULATOR (settlement_simulator.py) ──────────
+let TXN_LEDGER = [];
+const BASE_TXN_DATA = [
+  {src:'INR',dst:'USD',path:['INR','AED','USD'],usdM:10.003,bps:13,cost:13000,lat:35},
+  {src:'EUR',dst:'GBP',path:['EUR','GBP'],      usdM:1.087, bps:6, cost:6000, lat:18},
+  {src:'SGD',dst:'AED',path:['SGD','USD','AED'],usdM:3.73,  bps:13,cost:13000,lat:40},
+  {src:'USD',dst:'CNY',path:['USD','AED','CNY'],usdM:2.0,   bps:20,cost:20000,lat:65},
+  {src:'AED',dst:'INR',path:['AED','INR'],       usdM:2.72,  bps:8, cost:8000, lat:20},
+  {src:'GBP',dst:'EUR',path:['GBP','EUR'],       usdM:0.633, bps:6, cost:6000, lat:18},
+  {src:'CNY',dst:'SGD',path:['CNY','AED','USD','SGD'],usdM:0.11,bps:28,cost:28000,lat:90},
+  {src:'INR',dst:'SGD',path:['INR','SGD'],       usdM:1.198, bps:10,cost:10000,lat:35},
+];
+function initLedger() {
+  TXN_LEDGER = BASE_TXN_DATA.map((t,i) => {
+    const comp = checkCompliance(t.path, t.usdM*1e6);
+    const fx = t.path.reduce((acc,n,j) => {
+      if(j<t.path.length-1) {
+        const e = GRAPH[n] && GRAPH[n][t.path[j+1]];
+        return e ? acc * e.fx : acc;
+      }
+      return acc;
+    }, 1.0);
+    const metrics = evaluatePath(t.path, t.usdM);
+    return {
+      id: `CBDC-${Math.random().toString(16).slice(2,10).toUpperCase()}`,
+      route: t.path.join(' → '),
+      usd: t.usdM, bps: t.bps, cost: t.cost, lat: t.lat,
+      status: 'SETTLED',
+      risk: RISK_MATRIX[t.src][t.dst],
+      fx, compliance: comp.status, penalty: comp.penalty,
+      score: metrics.composite,
+    };
+  });
+}
+initLedger();
+
+// ── 8. STRESS TESTING ENGINE (stress_testing.py) ───────────────
+const SCENARIOS = {
+  baseline:        {name:'Baseline',         fxShock:[0,0],    liqDrain:[0,0],     latMult:[1,1],   costMult:[1,1],   failProb:0},
+  fx_shock_mild:   {name:'FX Shock (Mild)',  fxShock:[-0.05,0.05], liqDrain:[0,0], latMult:[1,1],   costMult:[1,1],   failProb:0},
+  fx_shock_severe: {name:'FX Shock (Severe)',fxShock:[-0.25,0.15],liqDrain:[0,0],  latMult:[1,1],   costMult:[1.5,3], failProb:0},
+  liquidity_mild:  {name:'Liquidity (Mild)', fxShock:[0,0],    liqDrain:[0.2,0.35],latMult:[1,1],   costMult:[1,1],   failProb:0},
+  liquidity_severe:{name:'Liquidity (Severe)',fxShock:[0,0],   liqDrain:[0.5,0.7], latMult:[1,1],   costMult:[1,1],   failProb:0},
+  network_congestion:{name:'Congestion',     fxShock:[0,0],    liqDrain:[0,0],     latMult:[2,5],   costMult:[1.2,2], failProb:0.1},
+  systemic_shock:  {name:'Systemic Crisis',  fxShock:[-0.2,0.1],liqDrain:[0.4,0.6],latMult:[2,4],  costMult:[1.5,2.5],failProb:0.15},
+};
+
+// Run Monte Carlo trials for a scenario
+function runMonteCarlo(scenarioKey, nTrials, src, dst, amountUsd) {
+  const sc = SCENARIOS[scenarioKey];
+  let successCount=0, costs=[], lats=[], basePath=null;
+  const seed = 42;
+  let rng = seed;
+  function rand() { rng = (rng*1664525+1013904223) & 0xFFFFFFFF; return (rng >>> 0) / 4294967296; }
+  function randRange(lo, hi) { return lo + rand()*(hi-lo); }
+
+  for(let trial=0; trial<nTrials; trial++) {
+    // Apply FX shock to network
+    const dynFx = {};
+    for(const e of EDGES_RAW) {
+      const [s,t,fx] = e;
+      const shock = randRange(...sc.fxShock);
+      dynFx[`${s}/${t}`] = fx * (1 + shock);
+    }
+    // Apply liquidity drain
+    const liqMult = 1 - randRange(...sc.liqDrain);
+    // Apply latency multiplier
+    const latMult = randRange(...sc.latMult);
+    const costMult = randRange(...sc.costMult);
+
+    // Corridor failure
+    const activeEdges = EDGES_RAW.filter(() => rand() > sc.failProb);
+
+    // Build stressed graph
+    const stressed = {};
+    for(const e of activeEdges) {
+      const [s,t,fx0,cost,lat,liq,friction,pvp] = e;
+      if(!stressed[s]) stressed[s] = {};
+      stressed[s][t] = {
+        fx: dynFx[`${s}/${t}`] || fx0,
+        cost: cost * costMult, lat: lat * latMult,
+        liq: liq * liqMult, friction, pvp
+      };
+    }
+    const savedGraph = GRAPH;
+    GRAPH = stressed;
+    const path = dijkstra(src, dst, amountUsd);
+    GRAPH = savedGraph;
+
+    if(!path) continue;
+    const metrics = (() => {
+      const savedG = GRAPH; GRAPH = stressed;
+      const m = evaluatePath(path, amountUsd);
+      GRAPH = savedG; return m;
+    })();
+    if(!metrics.feasible) continue;
+    successCount++;
+    costs.push(metrics.totalCost);
+    lats.push(metrics.totalLat);
+    if(!basePath) basePath = path;
+  }
+
+  costs.sort((a,b)=>a-b);
+  lats.sort((a,b)=>a-b);
+  const n = costs.length || 1;
+  return {
+    scenarioName: sc.name,
+    successRate: successCount/nTrials*100,
+    costMean: costs.reduce((a,b)=>a+b,0)/n,
+    costVar95: costs[Math.floor(n*0.95)] || 0,
+    latMean: lats.reduce((a,b)=>a+b,0)/n,
+    latP95: lats[Math.floor(n*0.95)] || 0,
+    basePath: basePath || [src,dst],
+  };
+}
+
+// Pre-compute all scenario results
+let STRESS_RESULTS = {};
+function computeStressResults() {
+  for(const key of Object.keys(SCENARIOS)) {
+    STRESS_RESULTS[key] = runMonteCarlo(key, 100, 'INR', 'USD', 10.0);
+  }
+}
+computeStressResults();
+
+/* ════════════════════════════════════════════════════════════════
+   HELPERS & UI
+════════════════════════════════════════════════════════════════ */
+const tip = document.getElementById('tooltip');
+function showTip(e,t){tip.textContent=t;tip.classList.add('show');moveTip(e);}
+function moveTip(e){tip.style.left=(e.clientX+14)+'px';tip.style.top=(e.clientY-4)+'px';}
+function hideTip(){tip.classList.remove('show');}
+
+// UTC Clock
+(function tick(){document.getElementById('clock').textContent='UTC '+new Date().toUTCString().split(' ')[4];setTimeout(tick,1000);})();
+
+// Source CCY label in amount field
+document.getElementById('rSrc').addEventListener('change',function(){
+  document.getElementById('amtCcy').textContent=this.value;
+});
+
+// Weight update — also triggers re-routing if on route tab
+function updateWeight(id, v, key) {
+  document.getElementById(id).textContent = parseFloat(v).toFixed(2);
+  WEIGHTS[key] = parseFloat(v);
+}
+
+function applyWeights() {
+  // Rebuild risk matrix with updated weights awareness (weights affect routing, not risk scores)
+  // Re-run route if visible
+  if(document.getElementById('tab-route').classList.contains('active')) computeRoute();
+  updateSidebarStats();
+}
+
+function updateSidebarStats() {
+  const totalUtil = CCY.reduce((s,c) => s + getNodeUtilization(c), 0) / CCY.length;
+  document.getElementById('sysNodeLoad').textContent = totalUtil.toFixed(0)+'%';
+  document.getElementById('sysNodeLoadBar').style.width = totalUtil+'%';
+  const totalVol = TXN_LEDGER.reduce((s,t) => s+t.usd, 0);
+  const totalCost = TXN_LEDGER.reduce((s,t) => s+t.cost, 0);
+  document.getElementById('statTxn').textContent = TXN_LEDGER.length;
+  document.getElementById('statVol').textContent = `$${totalVol.toFixed(1)}M`;
+  document.getElementById('statCost').textContent = `$${totalCost.toLocaleString()}`;
+}
+
+function handleSearch(q) {
+  if(!q) return;
+  const qUp = q.toUpperCase();
+  // Highlight matching nodes in network graph
+  drawNetwork('networkSvg', [], qUp);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   D3 NETWORK GRAPH
+════════════════════════════════════════════════════════════════ */
+const NET_POS = {
+  USD:[390,190],EUR:[175,110],GBP:[155,280],
+  INR:[600,280],SGD:[565,100],CNY:[440,45],AED:[295,320]
+};
+
+function drawNetwork(svgId, highlightPath=[], searchHighlight='') {
+  const svgEl = document.getElementById(svgId);
+  if(!svgEl) return;
+  const H = parseInt(svgEl.style.height)||320;
+  const svg = d3.select('#'+svgId);
+  svg.selectAll('*').remove();
+  svg.attr('viewBox',`0 0 740 ${H}`);
+
+  const hPairs = highlightPath.length>1 ? highlightPath.slice(0,-1).map((n,i)=>[n,highlightPath[i+1]]) : [];
+
+  const defs = svg.append('defs');
+  ['normal','highlight'].forEach(t=>{
+    defs.append('marker').attr('id','arrow-'+svgId+'-'+t).attr('viewBox','0 0 8 8').attr('refX',7).attr('refY',4)
+      .attr('markerWidth',5).attr('markerHeight',5).attr('orient','auto')
+      .append('path').attr('d','M0,0 L0,8 L8,4 Z')
+      .attr('fill', t==='highlight'?'#F59E0B':'rgba(255,255,255,0.2)');
+  });
+
+  // Draw edges from actual GRAPH data
+  for(const src of Object.keys(GRAPH)) {
+    for(const tgt of Object.keys(GRAPH[src])) {
+      if(!NET_POS[src]||!NET_POS[tgt]) continue;
+      const [x1,y1]=NET_POS[src],[x2,y2]=NET_POS[tgt];
+      const on = hPairs.some(([a,b])=>(a===src&&b===tgt)||(a===tgt&&b===src));
+      const friction = GRAPH[src][tgt].friction;
+      const edgeColor = friction>0.25?'#ef4444':friction>0.1?COLORS[src]:'#64748b';
+      const dx=x2-x1,dy=y2-y1;
+      const cpX=(x1+x2)/2+dy*0.15, cpY=(y1+y2)/2-dx*0.15;
+      svg.append('path')
+        .attr('d',`M${x1},${y1} Q${cpX},${cpY} ${x2},${y2}`)
+        .attr('fill','none')
+        .attr('stroke', on?'#F59E0B':edgeColor)
+        .attr('stroke-width', on?3:Math.max(1,(1-friction)*2.5))
+        .attr('opacity', on?1:0.35)
+        .attr('stroke-dasharray', on?'8,4':'none')
+        .attr('marker-end', on?`url(#arrow-${svgId}-highlight)`:`url(#arrow-${svgId}-normal)`)
+        .style('animation', on?'dash-flow 1.5s linear infinite':'none');
+    }
+  }
+
+  // Draw nodes from live NODE_POOLS data
+  CCY.forEach(ccy=>{
+    const [x,y] = NET_POS[ccy];
+    const onPath = highlightPath.includes(ccy);
+    const isSearch = searchHighlight && ccy.includes(searchHighlight);
+    const ut = getNodeUtilization(ccy);
+    const nodeSize = 22 + Math.log10(Math.max(NODES_META[ccy].cap,1000))*3;
+    const g = svg.append('g').attr('transform',`translate(${x},${y})`).style('cursor','pointer');
+    if(onPath||isSearch){
+      g.append('circle').attr('r',nodeSize+8).attr('fill','none')
+        .attr('stroke',isSearch?'#f59e0b':COLORS[ccy]).attr('stroke-width',1.5).attr('opacity',0.5)
+        .attr('stroke-dasharray','4,2');
+    }
+    // Node color shifts to amber if utilization > 40%
+    const nodeStroke = ut>40?'#f59e0b': onPath?'#fff':'rgba(255,255,255,0.1)';
+    g.append('circle').attr('r',nodeSize).attr('fill',COLORS[ccy])
+      .attr('stroke',nodeStroke).attr('stroke-width',onPath?2:1);
+    g.append('circle').attr('r',nodeSize).attr('fill','rgba(255,255,255,0.06)');
+    g.append('text').attr('text-anchor','middle').attr('dy','0.35em')
+      .attr('fill','#fff').attr('font-size',10).attr('font-weight','700')
+      .attr('font-family','Inter,sans-serif').text(ccy);
+    g.append('text').attr('text-anchor','middle').attr('dy',nodeSize+14)
+      .attr('fill','rgba(255,255,255,0.5)').attr('font-size',8).text(FLAGS[ccy]);
+    g.on('mouseover',(e)=>showTip(e,`${FLAGS[ccy]} ${ccy} — Avail: $${(NODE_POOLS[ccy].available/1000).toFixed(1)}B — Util: ${ut.toFixed(1)}%`))
+     .on('mousemove',moveTip).on('mouseout',hideTip);
+  });
+}
+
+/* ════════════════════════════════════════════════════════════════
+   CORRIDOR CARDS — live from GRAPH data
+════════════════════════════════════════════════════════════════ */
+function buildCorridorCards() {
+  const el = document.getElementById('corridorCards');
+  // Show 8 corridors derived from EDGES_RAW
+  const top8 = EDGES_RAW.slice(0,8).map(([src,tgt,fx,cost,lat,liq,fr])=>({
+    c:`${src}→${tgt}`,fx,cost,lat,liq,fr,risk:RISK_MATRIX[src][tgt]
+  }));
+  top8.forEach(c=>{
+    const frColor = c.fr>0.25?'text-red-400':c.fr>0.1?'text-amber-400':'text-green-400';
+    const badge = c.fr<0.1?'<span class="text-[9px] font-bold text-green-400 bg-green-500/10 border border-green-500/20 px-1.5 py-0.5 rounded">Optimal</span>':
+                  c.fr>0.25?'<span class="text-[9px] font-bold text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded">Congested</span>':
+                  '<span class="text-[9px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded">Stable</span>';
+    el.innerHTML+=`<div class="rounded-lg border border-border-dark bg-bg-dark p-3">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-xs font-bold text-slate-100">${c.c} Corridor</span>${badge}
+      </div>
+      <div class="grid grid-cols-2 gap-x-4 gap-y-1">
+        <div><div class="text-[9px] text-slate-500 uppercase tracking-widest">FX RATE</div><div class="text-xs font-mono text-slate-200">${c.fx.toFixed(5)}</div></div>
+        <div><div class="text-[9px] text-slate-500 uppercase tracking-widest">RISK SCORE</div><div class="text-xs font-mono text-slate-200">${c.risk.toFixed(4)}</div></div>
+        <div><div class="text-[9px] text-slate-500 uppercase tracking-widest">LATENCY</div><div class="text-xs font-mono ${c.lat<30?'text-green-400':c.lat>50?'text-amber-400':'text-slate-200'}">${c.lat}s</div></div>
+        <div><div class="text-[9px] text-slate-500 uppercase tracking-widest">FRICTION</div><div class="text-xs font-mono ${frColor}">${(c.fr*100).toFixed(1)}%</div></div>
+      </div>
+    </div>`;
+  });
+}
+
+/* ════════════════════════════════════════════════════════════════
+   LEDGER COMPONENT
+════════════════════════════════════════════════════════════════ */
+function buildLedger(containerId, showFx=false) {
+  const el=document.getElementById(containerId);
+  if(!el) return;
+  const header = showFx
+    ? `<tr class="text-slate-500 text-[10px] uppercase tracking-widest border-b border-border-dark"><th class="px-5 py-2.5 text-left font-bold">Timestamp</th><th class="px-5 py-2.5 text-left font-bold">Pair</th><th class="px-5 py-2.5 text-left font-bold">Amount</th><th class="px-5 py-2.5 text-left font-bold">Exch Rate</th><th class="px-5 py-2.5 text-left font-bold">Status</th><th class="px-5 py-2.5 text-left font-bold">Risk Score</th></tr>`
+    : `<tr class="text-slate-500 text-[10px] uppercase tracking-widest border-b border-border-dark"><th class="px-5 py-2.5 text-left font-bold">TXID</th><th class="px-5 py-2.5 text-left font-bold">Corridor</th><th class="px-5 py-2.5 text-left font-bold">Amount</th><th class="px-5 py-2.5 text-left font-bold">Status</th><th class="px-5 py-2.5 text-left font-bold">Time</th></tr>`;
+  let rows='';
+  TXN_LEDGER.forEach((t,i)=>{
+    const time = `14:41:${String(20+i).padStart(2,'0')}`;
+    const statusColor = t.status==='SETTLED'?'text-green-400':'text-amber-400';
+    if(showFx){
+      const riskColor = t.risk>0.15?'text-amber-400':'text-green-400';
+      rows+=`<tr class="border-b border-border-dark/50 hover:bg-slate-800/20 transition-colors ledger-row" style="animation-delay:${i*0.05}s">
+        <td class="px-5 py-3 font-mono text-[11px] text-slate-400">${time}:${String(i).padStart(2,'0')}</td>
+        <td class="px-5 py-3 font-semibold text-slate-200">${t.route.split(' → ').slice(0,2).join('/')}</td>
+        <td class="px-5 py-3 font-mono text-slate-200">${(t.usd*1000000).toLocaleString()}</td>
+        <td class="px-5 py-3 font-mono text-slate-200">${t.fx.toFixed(4)}</td>
+        <td class="px-5 py-3"><span class="flex items-center gap-1.5"><span class="h-1.5 w-1.5 rounded-full ${t.status==='SETTLED'?'bg-green-500':'bg-amber-400'} inline-block"></span><span class="${statusColor} font-semibold text-[11px]">${t.status}</span></span></td>
+        <td class="px-5 py-3 font-mono text-[11px] ${riskColor}">${t.risk.toFixed(4)}</td>
+      </tr>`;
+    } else {
+      rows+=`<tr class="border-b border-border-dark/50 hover:bg-slate-800/20 transition-colors ledger-row" style="animation-delay:${i*0.05}s">
+        <td class="px-5 py-3 font-mono text-[11px] text-primary cursor-pointer hover:underline">${t.id.slice(0,10)}…</td>
+        <td class="px-5 py-3 font-semibold text-slate-200">${t.route}</td>
+        <td class="px-5 py-3 font-mono text-slate-200">$${t.usd.toFixed(3)}M</td>
+        <td class="px-5 py-3"><span class="flex items-center gap-1.5"><span class="h-1.5 w-1.5 rounded-full bg-green-500 inline-block"></span><span class="${statusColor} font-semibold text-[11px]">${t.status}</span></span></td>
+        <td class="px-5 py-3 font-mono text-[11px] text-slate-400">${time}</td>
+      </tr>`;
+    }
+  });
+  el.innerHTML=`<table class="w-full text-xs"><thead>${header}</thead><tbody>${rows}</tbody></table>`;
+}
+
+function buildMiniLedger() {
+  const el=document.getElementById('miniLedger');
+  if(!el) return;
+  const last3 = TXN_LEDGER.slice(-3).reverse();
+  last3.forEach((t,i)=>{
+    const time=i===0?'Just now':i===1?'2m ago':'5m ago';
+    el.innerHTML+=`<div class="rounded-lg border border-border-dark bg-bg-dark p-2.5">
+      <div class="flex items-center justify-between mb-1">
+        <span class="font-mono text-[10px] font-bold text-slate-300">${t.id.slice(0,16)}</span>
+        <span class="text-[10px] text-slate-500">${time}</span>
+      </div>
+      <div class="text-[10px] text-slate-400">${t.route} via Bridge</div>
+      <div class="text-[10px] font-mono text-slate-500 mt-0.5">Compliance: ${t.compliance}</div>
+    </div>`;
+  });
+}
+
+/* ════════════════════════════════════════════════════════════════
+   FX HEATMAP — from computed RISK_MATRIX
+════════════════════════════════════════════════════════════════ */
+function buildHeatmap() {
+  const el=document.getElementById('heatmapGrid');
+  let html=`<div style="display:grid;grid-template-columns:40px repeat(7,1fr);gap:3px;align-items:center;">`;
+  html+='<div></div>';
+  CCY.forEach(c=>{html+=`<div class="text-center text-[10px] font-bold text-slate-400 py-1">${c}</div>`;});
+  CCY.forEach(src=>{
+    html+=`<div class="text-right text-[10px] font-bold text-slate-400 pr-2">${src}</div>`;
+    CCY.forEach(tgt=>{
+      const v=RISK_MATRIX[src][tgt];
+      if(src===tgt){
+        html+=`<div class="heat-cell h-9" style="background:rgba(255,255,255,0.03);color:rgba(255,255,255,0.1)">—</div>`;
+      } else {
+        const tier=getRiskTier(`${src}/${tgt}`);
+        const t=Math.min(v/0.25,1);
+        let bg;
+        if(t<0.4) bg=`rgba(34,197,94,${0.15+t*0.5})`;
+        else if(t<0.7) bg=`rgba(245,158,11,${0.25+t*0.3})`;
+        else bg=`rgba(239,68,68,${0.3+t*0.4})`;
+        const textClr=t>0.5?'#fca5a5':t>0.25?'#fde68a':'#86efac';
+        html+=`<div class="heat-cell h-9" style="background:${bg};color:${textClr}"
+          onmouseover="showTip(event,'${src}/${tgt}: ${v.toFixed(4)} — ${tier} tier (${v>0.15?'High':v>0.08?'Medium':'Low'})')"
+          onmousemove="moveTip(event)" onmouseout="hideTip()">${v.toFixed(2)}</div>`;
+      }
+    });
+  });
+  html+='</div>';
+  el.innerHTML=html;
+
+  // Update vol regime counts
+  const all = [];
+  CCY.forEach(s=>CCY.forEach(t=>{if(s!==t) all.push(RISK_MATRIX[s][t]);}));
+  const lowCount = all.filter(v=>v<0.08).length;
+  const medCount = all.filter(v=>v>=0.08).length;
+  const total = all.length;
+  document.getElementById('volLow').textContent = `${lowCount} pairs (${(lowCount/total*100).toFixed(0)}%)`;
+  document.getElementById('volMed').textContent = `${medCount} pairs (${(medCount/total*100).toFixed(0)}%)`;
+}
+
+function buildHighRiskPairs() {
+  const el=document.getElementById('highRiskPairs');
+  const pairs=[];
+  CCY.forEach(s=>CCY.forEach(t=>{if(s!==t)pairs.push({p:`${s}/${t}`,s,t,v:RISK_MATRIX[s][t],tier:getRiskTier(`${s}/${t}`)});}));
+  pairs.sort((a,b)=>b.v-a.v);
+  pairs.slice(0,8).forEach(p=>{
+    const riskClass=p.v>0.15?'text-amber-400':'text-orange-400';
+    const tier=p.v>0.15?'HIGH':'MEDIUM';
+    const tierClass=p.v>0.15?'bg-amber-500/10 border-amber-500/20 text-amber-400':'bg-orange-500/10 border-orange-500/20 text-orange-400';
+    el.innerHTML+=`<div class="rounded-lg border border-border-dark bg-bg-dark p-3">
+      <div class="flex items-center justify-between mb-1">
+        <span class="text-sm font-bold text-slate-100">${p.p}</span>
+        <div class="flex items-center gap-2">
+          <span class="text-base font-bold ${riskClass}">${p.v.toFixed(2)}</span>
+          <span class="text-[9px] font-bold border rounded px-1.5 py-0.5 ${tierClass}">${tier}</span>
+        </div>
+      </div>
+      <div class="text-[10px] text-slate-500">${p.tier} • ${p.v>0.15?'High Volatility':'Moderate Risk'}</div>
+    </div>`;
+  });
+}
+
+function buildVolDonut() {
+  const svg=d3.select('#volDonut');
+  const cx=70,cy=70,r=52,inner=32;
+  const all=[];
+  CCY.forEach(s=>CCY.forEach(t=>{if(s!==t)all.push(RISK_MATRIX[s][t]);}));
+  const lowC=all.filter(v=>v<0.08).length;
+  const medC=all.length-lowC;
+  const data=[{v:lowC,c:'#22c55e'},{v:medC,c:'#f59e0b'}];
+  const total=all.length;
+  let angle=-Math.PI/2;
+  data.forEach(d=>{
+    const sweep=(d.v/total)*2*Math.PI;
+    const x1=cx+r*Math.cos(angle),y1=cy+r*Math.sin(angle);
+    const x2=cx+r*Math.cos(angle+sweep),y2=cy+r*Math.sin(angle+sweep);
+    const large=sweep>Math.PI?1:0;
+    svg.append('path').attr('d',`M${cx+inner*Math.cos(angle)},${cy+inner*Math.sin(angle)} L${x1},${y1} A${r},${r},0,${large},1,${x2},${y2} L${cx+inner*Math.cos(angle+sweep)},${cy+inner*Math.sin(angle+sweep)} A${inner},${inner},0,${large},0,${cx+inner*Math.cos(angle)},${cy+inner*Math.sin(angle)} Z`)
+      .attr('fill',d.c).attr('opacity',0.85).attr('stroke','#0d1117').attr('stroke-width',2);
+    angle+=sweep;
+  });
+  const stablePct=Math.round(lowC/total*100);
+  svg.append('text').attr('x',cx).attr('y',cy+2).attr('text-anchor','middle').attr('dy','0.35em')
+    .attr('fill','#e2e8f0').attr('font-size',20).attr('font-weight',700).attr('font-family','Inter').text(stablePct+'%');
+  svg.append('text').attr('x',cx).attr('y',cy+18).attr('text-anchor','middle')
+    .attr('fill','#94a3b8').attr('font-size',9).attr('font-family','Inter').text('STABLE');
+}
+
+/* ════════════════════════════════════════════════════════════════
+   LIQUIDITY — from live NODE_POOLS
+════════════════════════════════════════════════════════════════ */
+function buildLiqBars() {
+  const el=document.getElementById('liqBarsContainer');
+  const nodes = CCY.map(ccy=>{
+    const p = NODE_POOLS[ccy];
+    return {ccy, available:p.available, min:p.minimum, cap:p.capacity, ut:getNodeUtilization(ccy)};
+  });
+  el.innerHTML='<div class="space-y-3">'+
+    nodes.map(n=>{
+      const avPct=(n.available/n.cap*100).toFixed(1);
+      const mnPct=(n.min/n.cap*100).toFixed(1);
+      const barCol=n.ut>50?'#ef4444':n.ut>40?'#f59e0b':'#2563EB';
+      return `<div class="space-y-1">
+        <div class="flex items-center justify-between text-[11px]">
+          <span class="font-bold" style="color:${COLORS[n.ccy]}">${FLAGS[n.ccy]} ${n.ccy}</span>
+          <span class="font-mono text-slate-400">$${(n.available/1000).toFixed(1)}B / $${(n.cap/1000).toFixed(0)}B</span>
+        </div>
+        <div class="relative h-7 bg-slate-800 rounded-md overflow-hidden cursor-pointer"
+          onmouseover="showTip(event,'${n.ccy}: $${n.available.toLocaleString()}M avail — ${n.ut.toFixed(1)}% utilized — Headroom: $${getNodeHeadroom(n.ccy).toLocaleString()}M')"
+          onmousemove="moveTip(event)" onmouseout="hideTip()">
+          <div class="absolute inset-0 flex">
+            <div class="h-full rounded-l-md liq-bar" style="width:${avPct}%;background:${barCol}"></div>
+            <div class="h-full flex-1 opacity-30" style="background:#475569"></div>
+          </div>
+          <div class="absolute top-0 bottom-0 w-0.5 bg-red-500 opacity-70" style="left:${mnPct}%"></div>
+        </div>
+      </div>`;
+    }).join('')+'</div>';
+}
+
+function buildNodeLiqTable() {
+  const tb=document.getElementById('nodeLiqTable');
+  tb.innerHTML='';
+  CCY.forEach(ccy=>{
+    const p = NODE_POOLS[ccy];
+    const ut = getNodeUtilization(ccy);
+    const utColor=ut>50?'text-red-400':ut>40?'text-amber-400':'text-green-400';
+    const statusText=ut>50?'CRITICAL':ut>40?'HEAVY LOAD':'OPTIMAL';
+    const statusClass=ut>50?'bg-red-500/10 border-red-500/20 text-red-400':ut>40?'bg-amber-500/10 border-amber-500/20 text-amber-400':'bg-green-500/10 border-green-500/20 text-green-400';
+    // Efficiency: based on headroom ratio (from clearing_engine composite logic)
+    const eff=(100-ut+NODES_META[ccy].credibility*10).toFixed(1);
+    tb.innerHTML+=`<tr class="border-b border-border-dark/50 hover:bg-slate-800/20 transition-colors">
+      <td class="px-5 py-3 flex items-center gap-2"><div class="w-3 h-3 rounded" style="background:${COLORS[ccy]}"></div><span class="font-bold text-slate-200">${ccy}-NORTH-01</span></td>
+      <td class="px-5 py-3 text-slate-300">${ccy}-CBDC</td>
+      <td class="px-5 py-3 font-mono font-bold text-slate-100">$${(p.available/1000).toFixed(2)}B</td>
+      <td class="px-5 py-3">
+        <div class="flex items-center gap-2">
+          <div class="h-1.5 w-20 bg-slate-700 rounded-full overflow-hidden"><div class="h-full rounded-full liq-bar" style="width:${ut}%;background:${ut>50?'#ef4444':ut>40?'#f59e0b':'#2563EB'}"></div></div>
+          <span class="text-[11px] font-mono ${utColor}">${ut.toFixed(0)}%</span>
+        </div>
+      </td>
+      <td class="px-5 py-3 font-mono font-bold text-slate-100">${eff}</td>
+      <td class="px-5 py-3"><span class="text-[10px] font-bold border rounded px-2 py-0.5 ${statusClass}">${statusText}</span></td>
+    </tr>`;
+  });
+}
+
+// Auto-refresh liquidity counter
+let liqRefTimer = 5;
+setInterval(()=>{
+  liqRefTimer--;
+  const el = document.getElementById('liqRefreshTimer');
+  if(el) el.textContent = `Auto-refresh in ${liqRefTimer}s ↺`;
+  if(liqRefTimer <= 0) {
+    liqRefTimer = 5;
+    // Simulate intraday recycling (mirrors liquidity_manager.simulate_intraday_recycling)
+    for(const ccy of CCY) {
+      const p = NODE_POOLS[ccy];
+      const recycled = p.recycling * (1-p.available/p.capacity) * p.capacity * (1/8);
+      p.available = Math.min(p.capacity, p.available + recycled);
+    }
+    if(document.getElementById('tab-liquidity').classList.contains('active')) {
+      buildLiqBars(); buildNodeLiqTable();
+    }
+  }
+}, 1000);
+
+/* ════════════════════════════════════════════════════════════════
+   STRESS TESTING — from Monte Carlo engine
+════════════════════════════════════════════════════════════════ */
+function buildStressChart() {
+  const el=document.getElementById('stressChartContainer');
+  const stressData = Object.values(STRESS_RESULTS);
+  const W=el.offsetWidth||700, H=220;
+  const pad={l:40,r:20,t:20,b:60};
+  const bw=(W-pad.l-pad.r)/stressData.length-6;
+  const maxVar=Math.max(...stressData.map(d=>d.costVar95))*1.15||40;
+  const svg=d3.select('#stressChartContainer').append('svg').attr('width','100%').attr('height',H).attr('viewBox',`0 0 ${W} ${H}`);
+
+  [0,10,20,30,40].forEach(v=>{
+    const y=H-pad.b-((v/maxVar)*(H-pad.t-pad.b));
+    svg.append('line').attr('x1',pad.l).attr('y1',y).attr('x2',W-pad.r).attr('y2',y)
+      .attr('stroke','rgba(255,255,255,0.04)').attr('stroke-width',1);
+    svg.append('text').attr('x',pad.l-4).attr('y',y+3).attr('text-anchor','end').attr('fill','#475569').attr('font-size',9).attr('font-family','Inter').text(v);
+  });
+
+  const baseY=H-pad.b-((stressData[0].costVar95/maxVar)*(H-pad.t-pad.b));
+  svg.append('line').attr('x1',pad.l).attr('y1',baseY).attr('x2',W-pad.r).attr('y2',baseY)
+    .attr('stroke','rgba(34,197,94,0.35)').attr('stroke-width',1).attr('stroke-dasharray','5,4');
+
+  stressData.forEach((d,i)=>{
+    const x=pad.l+i*(bw+6);
+    const bH=(d.costVar95/maxVar)*(H-pad.t-pad.b);
+    const y=H-pad.b-bH;
+    // Color by success rate
+    const col = d.successRate>95?'#22c55e':d.successRate>80?'#f59e0b':'#ef4444';
+    svg.append('rect').attr('x',x).attr('y',y).attr('width',bw/2-1).attr('height',bH)
+      .attr('fill',col+'60').attr('rx',3);
+    const stH=Math.min(bH*(1+(i*0.08)),H-pad.t-pad.b);
+    const stY=H-pad.b-stH;
+    svg.append('rect').attr('x',x+bw/2+1).attr('y',stY).attr('width',bw/2-1).attr('height',stH)
+      .attr('fill',col+'99').attr('rx',3);
+    svg.append('text').attr('x',x+bw/2).attr('y',y-5).attr('text-anchor','middle').attr('fill','#94a3b8').attr('font-size',8).attr('font-family','JetBrains Mono, monospace').text(d.costVar95.toFixed(1));
+    const words=d.scenarioName.split(' ');
+    words.forEach((w,wi)=>{
+      svg.append('text').attr('x',x+bw/2).attr('y',H-pad.b+12+wi*10).attr('text-anchor','middle').attr('fill','#475569').attr('font-size',7.5).attr('font-family','Inter').text(w);
+    });
+  });
+  svg.append('line').attr('x1',pad.l).attr('y1',H-pad.b).attr('x2',W-pad.r).attr('y2',H-pad.b).attr('stroke','#334155').attr('stroke-width',1);
+}
+
+function buildStressLedger() {
+  const el=document.getElementById('stressLedger');
+  const statuses=['CLEARED','QUEUED','RISK LOCKED'];
+  const colors=['text-green-400 bg-green-500/10 border-green-500/20','text-amber-400 bg-amber-500/10 border-amber-500/20','text-red-400 bg-red-500/10 border-red-500/20'];
+  const rows=TXN_LEDGER.slice(0,6).map((t,i)=>({
+    id:`#CBDC-${8842+i}-XF`,
+    asset:`<span class="text-[10px] font-bold bg-primary/10 border border-primary/20 text-primary px-1.5 py-0.5 rounded font-mono">${t.route.split(' ')[0]}</span>`,
+    assetName:`Digital ${t.route.split(' ')[0]}`,
+    vol:(t.usd*1000000).toLocaleString(),
+    delay:t.lat<30?`${t.lat}ms`:t.lat>80?`${t.lat*10}ms (Alert)`:`${t.lat}ms`,
+    delayClass:t.lat>80?'text-red-400 font-bold':'text-slate-300',
+    status:i>4?statuses[2]:i>3?statuses[1]:statuses[0],
+    sClass:i>4?colors[2]:i>3?colors[1]:colors[0],
+    flag:i>4?'block':i>3?'warning':'',
+  }));
+  let html=`<table class="w-full text-xs"><thead><tr class="text-slate-500 text-[10px] uppercase tracking-widest border-b border-border-dark">
+    <th class="px-5 py-2.5 text-left font-bold">TXID</th><th class="px-5 py-2.5 text-left font-bold">Asset</th>
+    <th class="px-5 py-2.5 text-left font-bold">Volume</th><th class="px-5 py-2.5 text-left font-bold">Settlement Delay</th>
+    <th class="px-5 py-2.5 text-left font-bold">Status</th><th class="px-5 py-2.5 text-left font-bold">Risk Flag</th>
+  </tr></thead><tbody>`;
+  rows.forEach(r=>{
+    html+=`<tr class="border-b border-border-dark/50 hover:bg-slate-800/20 transition-colors">
+      <td class="px-5 py-3 font-mono text-[11px] text-primary">${r.id}</td>
+      <td class="px-5 py-3">${r.asset} ${r.assetName}</td>
+      <td class="px-5 py-3 font-mono text-slate-200">${r.vol}</td>
+      <td class="px-5 py-3 font-mono text-[11px] ${r.delayClass}">${r.delay}</td>
+      <td class="px-5 py-3"><span class="text-[10px] font-bold border rounded px-2 py-0.5 ${r.sClass}">${r.status}</span></td>
+      <td class="px-5 py-3 text-slate-500">${r.flag?`<span class="material-symbols-outlined text-sm ${r.sClass.split(' ')[0]}">${r.flag}</span>`:'<span class="text-slate-700">●</span>'}</td>
+    </tr>`;
+  });
+  html+='</tbody></table>';
+  el.innerHTML=html;
+}
+
+function loadScenario(key) {
+  const sc = STRESS_RESULTS[key];
+  if(!sc) return;
+  document.getElementById('str_success').textContent = sc.successRate.toFixed(1)+'%';
+  document.getElementById('str_var').textContent = `$${(sc.costVar95*1000).toFixed(1)}K`;
+  document.getElementById('str_lat').innerHTML = `${sc.latMean.toFixed(1)}<span class="text-lg font-normal text-slate-400">s</span>`;
+  const grade = sc.successRate>98?'A+':sc.successRate>90?'A':sc.successRate>80?'B':'C';
+  document.getElementById('str_res').textContent = grade;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   ROUTE OPTIMIZER — live Dijkstra from clearing_engine
+════════════════════════════════════════════════════════════════ */
+function computeRoute() {
+  const src = document.getElementById('rSrc').value;
+  const dst = document.getElementById('rDst').value;
+  if(src === dst) return;
+
+  const rawAmt = parseFloat(document.getElementById('rAmt').value) || 835000000;
+  // Convert to USD millions for the engine
+  const srcEdge = GRAPH[src]; 
+  const usdPerSrc = srcEdge && srcEdge['USD'] ? srcEdge['USD'].fx : 0.01198;
+  const amtUsd = (rawAmt * usdPerSrc) / 1e6;
+
+  // Run Dijkstra
+  const optPath = dijkstra(src, dst, amtUsd);
+  if(!optPath) {
+    document.getElementById('compScore').textContent = '—';
+    return;
+  }
+  const metrics = evaluatePath(optPath, amtUsd);
+  const comp = checkCompliance(optPath, amtUsd * 1e6);
+
+  // Efficiency score (100 = perfect, 0 = worst)
+  const effScore = Math.max(0, 100 - metrics.composite * 100).toFixed(1);
+  document.getElementById('compScore').textContent = effScore;
+
+  // Cost display
+  document.getElementById('resCost').textContent = `${(metrics.totalCost/10000*100).toFixed(3)}%`;
+  document.getElementById('resCostSub').textContent = `-$${(metrics.estCostUsd*1000).toFixed(0)} est. cost`;
+
+  // Latency
+  document.getElementById('resLat').textContent = `${metrics.totalLat.toFixed(0)}s`;
+
+  // FX Risk
+  const riskLabel = metrics.avgRisk<0.08?'Low':metrics.avgRisk<0.15?'Medium':'High';
+  const riskEl = document.getElementById('resRisk');
+  riskEl.textContent = `${riskLabel} (${metrics.avgRisk.toFixed(4)})`;
+  riskEl.className = `text-lg font-bold ${metrics.avgRisk<0.08?'text-green-400':metrics.avgRisk<0.15?'text-amber-400':'text-red-400'}`;
+  document.getElementById('riskBar').style.width = (metrics.avgRisk * 400)+'%';
+
+  // Compliance (from compliance_engine.py logic)
+  const compEl = document.getElementById('resComp');
+  if(comp.status === 'APPROVED') {
+    compEl.textContent = '0.00%'; compEl.className = 'text-lg font-bold text-green-400';
+    document.getElementById('resCompSub').textContent = 'Sanction Check Clear';
+  } else {
+    compEl.textContent = `${(comp.penalty*100).toFixed(2)}%`; compEl.className = 'text-lg font-bold text-amber-400';
+    document.getElementById('resCompSub').textContent = `Flagged: ${comp.flags.join(', ')}`;
+  }
+
+  // Redraw network with highlighted route
+  drawNetwork('routeNetSvg', optPath);
+
+  // K=3 alternative routes (from clearing_engine.find_k_best_routes)
+  const altPaths = kShortestPaths(src, dst, 3, amtUsd);
+  const tbody = document.getElementById('altRoutes');
+  tbody.innerHTML = '';
+  altPaths.forEach((r, i) => {
+    const liqPct = Math.min(100, 65 + (1-r.composite)*40).toFixed(0);
+    const liqColor = liqPct>70?'bg-primary':liqPct>50?'bg-amber-400':'bg-red-500';
+    const statusLabel = i===0?'<span class="text-xs font-bold text-green-400">Optimal</span>':
+                        r.avgRisk<0.15?'<span class="text-xs font-medium text-slate-400">Viable</span>':
+                        '<span class="text-xs font-medium text-amber-400">Low Liquidity</span>';
+    tbody.innerHTML += `<tr class="border-b border-border-dark/50 hover:bg-slate-800/30 transition-colors">
+      <td class="px-4 py-3 font-mono ${i===0?'text-slate-200':'text-slate-400'}">${r.path.join(' → ')}</td>
+      <td class="px-4 py-3 ${i===0?'text-slate-300':'text-slate-400'}">${r.totalLat.toFixed(0)}s</td>
+      <td class="px-4 py-3"><div class="h-1.5 w-24 bg-slate-700 rounded-full overflow-hidden"><div class="h-full ${liqColor} rounded-full" style="width:${liqPct}%"></div></div></td>
+      <td class="px-4 py-3 font-mono ${i===0?'text-slate-200':'text-slate-400'}">$${(r.estCostUsd*1000).toFixed(0)}</td>
+      <td class="px-4 py-3">${statusLabel}</td>
+    </tr>`;
+  });
+}
+
+function executeSettlement() {
+  const src = document.getElementById('rSrc').value;
+  const dst = document.getElementById('rDst').value;
+  if(src === dst) return;
+
+  const rawAmt = parseFloat(document.getElementById('rAmt').value) || 835000000;
+  const srcEdge = GRAPH[src];
+  const usdPerSrc = srcEdge && srcEdge['USD'] ? srcEdge['USD'].fx : 0.01198;
+  const amtUsd = (rawAmt * usdPerSrc) / 1e6;
+
+  const optPath = dijkstra(src, dst, amtUsd);
+  if(!optPath) return;
+  const metrics = evaluatePath(optPath, amtUsd);
+  const comp = checkCompliance(optPath, amtUsd * 1e6);
+
+  // Lock liquidity on node pools (settlement_simulator.py lock_path_funds)
+  for(let i=0;i<optPath.length-1;i++) {
+    const n = optPath[i];
+    if(NODE_POOLS[n]) {
+      NODE_POOLS[n].available = Math.max(NODE_POOLS[n].minimum, NODE_POOLS[n].available - amtUsd*0.001);
+    }
+  }
+  // Release to destination (settlement_simulator.py release_path_funds)
+  const dstNode = optPath[optPath.length-1];
+  if(NODE_POOLS[dstNode]) {
+    NODE_POOLS[dstNode].available = Math.min(NODE_POOLS[dstNode].capacity, NODE_POOLS[dstNode].available + amtUsd*0.001*NODE_POOLS[dstNode].recycling);
+  }
+
+  // Record to ledger
+  const newTx = {
+    id: `CBDC-${Math.random().toString(16).slice(2,10).toUpperCase()}`,
+    route: optPath.join(' → '),
+    usd: amtUsd, bps: metrics.totalCost,
+    cost: Math.round(metrics.estCostUsd*1000),
+    lat: metrics.totalLat, status:'SETTLED',
+    risk: metrics.avgRisk,
+    fx: metrics.fxRate,
+    compliance: comp.status, penalty: comp.penalty,
+    score: metrics.composite,
+  };
+  TXN_LEDGER.push(newTx);
+  updateMetricsBar();
+  updateSidebarStats();
+  document.getElementById('miniLedger').innerHTML='';
+  buildMiniLedger();
+}
+
+function updateMetricsBar() {
+  const n = TXN_LEDGER.length;
+  const totalVol = TXN_LEDGER.reduce((s,t)=>s+t.usd, 0);
+  const avgCost = TXN_LEDGER.reduce((s,t)=>s+t.bps, 0) / n;
+  const avgLat = TXN_LEDGER.reduce((s,t)=>s+t.lat, 0) / n;
+  document.getElementById('m_txn').textContent = n;
+  document.getElementById('m_vol').innerHTML = `$${totalVol.toFixed(1)}<span class="text-sm font-normal text-slate-400">M</span>`;
+  document.getElementById('m_cost').innerHTML = `${avgCost.toFixed(1)}<span class="text-sm font-normal text-slate-400">bps</span>`;
+  document.getElementById('m_lat').innerHTML = `${avgLat.toFixed(1)}<span class="text-sm font-normal text-slate-400">s</span>`;
+  // Health strip
+  document.getElementById('h_avgcost').textContent = avgCost.toFixed(1);
+  document.getElementById('h_avglat').textContent = avgLat.toFixed(0)+'s';
+  const avgFr = EDGES_RAW.reduce((s,e)=>s+e[6],0)/EDGES_RAW.length;
+  document.getElementById('h_avgfr').textContent = avgFr.toFixed(3);
+}
+
+function runStress(btn) {
+  const orig=btn.innerHTML;
+  btn.innerHTML='<span class="material-symbols-outlined text-sm animate-spin">sync</span> Simulating...';
+  btn.disabled=true;
+  setTimeout(()=>{
+    computeStressResults();
+    // Rebuild stress chart
+    document.getElementById('stressChartContainer').innerHTML='';
+    buildStressChart();
+    // Update top metrics from baseline
+    loadScenario('baseline');
+    btn.innerHTML=orig;
+    btn.disabled=false;
+  }, 2200);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TAB SWITCHING
+════════════════════════════════════════════════════════════════ */
+let built={};
+function switchTab(id,btn){
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t=>{t.classList.remove('tab-active');t.classList.add('tab-inactive');});
+  document.getElementById('tab-'+id).classList.add('active');
+  btn.classList.remove('tab-inactive'); btn.classList.add('tab-active');
+  if(!built[id]){buildTab(id);built[id]=true;}
+}
+
+function buildTab(id){
+  if(id==='fx'){buildHeatmap();buildHighRiskPairs();buildVolDonut();}
+  if(id==='liquidity'){buildLiqBars();buildNodeLiqTable();}
+  if(id==='stress'){buildStressChart();buildStressLedger();}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   INIT
+════════════════════════════════════════════════════════════════ */
+window.addEventListener('load',()=>{
+  drawNetwork('networkSvg');
+  buildCorridorCards();
+  buildLedger('ledgerNetwork');
+  buildMiniLedger();
+  buildLedger('fxLedger',true);
+  drawNetwork('routeNetSvg');
+  updateMetricsBar();
+  updateSidebarStats();
+  built['network']=true;
+  // Compute initial route
+  setTimeout(computeRoute, 100);
+  window.addEventListener('resize',()=>{
+    drawNetwork('networkSvg');
+    if(document.getElementById('tab-route').classList.contains('active')) drawNetwork('routeNetSvg');
+    if(document.getElementById('tab-stress').classList.contains('active')){
+      document.getElementById('stressChartContainer').innerHTML=''; buildStressChart();
+    }
+  });
+});
+</script>
+</body>
+</html>

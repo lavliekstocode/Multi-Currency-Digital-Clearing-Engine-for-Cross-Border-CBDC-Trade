@@ -1,0 +1,659 @@
+openapi: 3.1.0
+info:
+  title: Api
+  version: 0.1.0
+  description: CBDC Clearing Engine API
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: nodes
+    description: CBDC network nodes
+  - name: corridors
+    description: Settlement corridors
+  - name: transactions
+    description: Transactions and settlements
+  - name: fx
+    description: FX rates and risk
+  - name: liquidity
+    description: Liquidity pools
+  - name: stress
+    description: Stress testing
+  - name: dashboard
+    description: Dashboard aggregates
+
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /nodes:
+    get:
+      operationId: listNodes
+      tags: [nodes]
+      summary: List all CBDC nodes
+      responses:
+        "200":
+          description: List of nodes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Node"
+
+  /nodes/{id}:
+    get:
+      operationId: getNode
+      tags: [nodes]
+      summary: Get node details
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Node details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Node"
+        "404":
+          description: Not found
+
+  /corridors:
+    get:
+      operationId: listCorridors
+      tags: [corridors]
+      summary: List all corridors
+      responses:
+        "200":
+          description: List of corridors
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Corridor"
+
+  /transactions:
+    get:
+      operationId: listTransactions
+      tags: [transactions]
+      summary: List transactions
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of transactions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Transaction"
+    post:
+      operationId: createTransaction
+      tags: [transactions]
+      summary: Initiate a new transaction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransactionInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+
+  /transactions/{id}:
+    get:
+      operationId: getTransaction
+      tags: [transactions]
+      summary: Get transaction by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Transaction
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+
+  /transactions/{id}/settle:
+    post:
+      operationId: settleTransaction
+      tags: [transactions]
+      summary: Execute settlement for a transaction
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Settlement result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+
+  /route/optimize:
+    post:
+      operationId: optimizeRoute
+      tags: [transactions]
+      summary: Compute optimal route for a transaction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RouteRequest"
+      responses:
+        "200":
+          description: Route optimization result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RouteResult"
+
+  /fx/rates:
+    get:
+      operationId: listFxRates
+      tags: [fx]
+      summary: Get current FX rates matrix
+      responses:
+        "200":
+          description: FX rates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FxRate"
+
+  /fx/risk:
+    get:
+      operationId: listFxRisk
+      tags: [fx]
+      summary: Get FX risk scores for all pairs
+      responses:
+        "200":
+          description: FX risk matrix
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FxRisk"
+
+  /liquidity/nodes:
+    get:
+      operationId: listNodeLiquidity
+      tags: [liquidity]
+      summary: Get liquidity levels per node
+      responses:
+        "200":
+          description: Node liquidity
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NodeLiquidity"
+
+  /liquidity/inject:
+    post:
+      operationId: injectLiquidity
+      tags: [liquidity]
+      summary: Inject liquidity into a node
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LiquidityInjection"
+      responses:
+        "200":
+          description: Updated liquidity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeLiquidity"
+
+  /stress/run:
+    post:
+      operationId: runStressTest
+      tags: [stress]
+      summary: Run Monte Carlo stress simulation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StressTestInput"
+      responses:
+        "200":
+          description: Stress test results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StressTestResult"
+
+  /stress/results:
+    get:
+      operationId: listStressResults
+      tags: [stress]
+      summary: Get historical stress test results
+      responses:
+        "200":
+          description: Historical results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StressTestResult"
+
+  /dashboard/summary:
+    get:
+      operationId: getDashboardSummary
+      tags: [dashboard]
+      summary: Get dashboard summary metrics
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummary"
+
+  /dashboard/activity:
+    get:
+      operationId: listActivity
+      tags: [dashboard]
+      summary: Get recent settlement activity feed
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Activity feed
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityItem"
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+
+    Node:
+      type: object
+      required: [id, currency, name, credibility, gdp, amlRisk, dailyVolCapM, status]
+      properties:
+        id:
+          type: integer
+        currency:
+          type: string
+        name:
+          type: string
+        credibility:
+          type: number
+        gdp:
+          type: number
+        amlRisk:
+          type: integer
+        dailyVolCapM:
+          type: number
+        status:
+          type: string
+        color:
+          type: ["string", "null"]
+
+    Corridor:
+      type: object
+      required: [id, srcCurrency, tgtCurrency, fxRate, costBps, latencyS, liquidityM, friction, pvp]
+      properties:
+        id:
+          type: integer
+        srcCurrency:
+          type: string
+        tgtCurrency:
+          type: string
+        fxRate:
+          type: number
+        costBps:
+          type: number
+        latencyS:
+          type: number
+        liquidityM:
+          type: number
+        friction:
+          type: number
+        pvp:
+          type: boolean
+        status:
+          type: string
+
+    Transaction:
+      type: object
+      required: [id, srcCurrency, tgtCurrency, amount, status, createdAt]
+      properties:
+        id:
+          type: integer
+        txHash:
+          type: ["string", "null"]
+        srcCurrency:
+          type: string
+        tgtCurrency:
+          type: string
+        amount:
+          type: number
+        amountConverted:
+          type: ["number", "null"]
+        purposeCode:
+          type: ["string", "null"]
+        entityType:
+          type: ["string", "null"]
+        status:
+          type: string
+        route:
+          type: ["string", "null"]
+        costBps:
+          type: ["number", "null"]
+        latencyS:
+          type: ["number", "null"]
+        fxRiskScore:
+          type: ["number", "null"]
+        complianceScore:
+          type: ["number", "null"]
+        compositeScore:
+          type: ["number", "null"]
+        blockHash:
+          type: ["string", "null"]
+        prevBlockHash:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        settledAt:
+          type: ["string", "null"]
+
+    TransactionInput:
+      type: object
+      required: [srcCurrency, tgtCurrency, amount]
+      properties:
+        srcCurrency:
+          type: string
+        tgtCurrency:
+          type: string
+        amount:
+          type: number
+        purposeCode:
+          type: string
+        entityType:
+          type: string
+        alphaWeight:
+          type: number
+        betaWeight:
+          type: number
+        gammaWeight:
+          type: number
+        deltaWeight:
+          type: number
+
+    RouteRequest:
+      type: object
+      required: [srcCurrency, tgtCurrency, amount]
+      properties:
+        srcCurrency:
+          type: string
+        tgtCurrency:
+          type: string
+        amount:
+          type: number
+        purposeCode:
+          type: string
+        entityType:
+          type: string
+        alphaWeight:
+          type: number
+        betaWeight:
+          type: number
+        gammaWeight:
+          type: number
+        deltaWeight:
+          type: number
+
+    RouteResult:
+      type: object
+      required: [optimalRoute, compositeScore, costBps, latencyS, fxRiskScore, complianceScore, alternativeRoutes]
+      properties:
+        optimalRoute:
+          type: array
+          items:
+            type: string
+        compositeScore:
+          type: number
+        costBps:
+          type: number
+        latencyS:
+          type: number
+        fxRiskScore:
+          type: number
+        complianceScore:
+          type: number
+        alternativeRoutes:
+          type: array
+          items:
+            $ref: "#/components/schemas/AlternativeRoute"
+
+    AlternativeRoute:
+      type: object
+      required: [path, latencyS, liquidityM, totalFeesBps, status]
+      properties:
+        path:
+          type: array
+          items:
+            type: string
+        latencyS:
+          type: number
+        liquidityM:
+          type: number
+        totalFeesBps:
+          type: number
+        status:
+          type: string
+        compositeScore:
+          type: number
+
+    FxRate:
+      type: object
+      required: [id, srcCurrency, tgtCurrency, rate, updatedAt]
+      properties:
+        id:
+          type: integer
+        srcCurrency:
+          type: string
+        tgtCurrency:
+          type: string
+        rate:
+          type: number
+        updatedAt:
+          type: string
+
+    FxRisk:
+      type: object
+      required: [srcCurrency, tgtCurrency, riskScore, ewmaVol, ar1Forecast, regime]
+      properties:
+        srcCurrency:
+          type: string
+        tgtCurrency:
+          type: string
+        riskScore:
+          type: number
+        ewmaVol:
+          type: number
+        ar1Forecast:
+          type: number
+        regime:
+          type: string
+
+    NodeLiquidity:
+      type: object
+      required: [id, currency, totalLiquidityB, availableLiquidityB, reservedLiquidityB, utilizationPct, status]
+      properties:
+        id:
+          type: integer
+        currency:
+          type: string
+        totalLiquidityB:
+          type: number
+        availableLiquidityB:
+          type: number
+        reservedLiquidityB:
+          type: number
+        utilizationPct:
+          type: number
+        efficiencyScore:
+          type: number
+        status:
+          type: string
+
+    LiquidityInjection:
+      type: object
+      required: [currency, amountB]
+      properties:
+        currency:
+          type: string
+        amountB:
+          type: number
+
+    StressTestInput:
+      type: object
+      required: [scenario, trials]
+      properties:
+        scenario:
+          type: string
+        srcNode:
+          type: string
+        dstGroup:
+          type: string
+        trials:
+          type: integer
+        varPct:
+          type: number
+        includeLiquidityContagion:
+          type: boolean
+
+    StressTestResult:
+      type: object
+      required: [id, scenario, successRate, varCost, avgLatencyS, resilienceScore, createdAt]
+      properties:
+        id:
+          type: integer
+        scenario:
+          type: string
+        trials:
+          type: integer
+        successRate:
+          type: number
+        varCost:
+          type: number
+        avgLatencyS:
+          type: number
+        resilienceScore:
+          type: string
+        baselineSuccessRate:
+          type: ["number", "null"]
+        baselineVarCost:
+          type: ["number", "null"]
+        createdAt:
+          type: string
+
+    DashboardSummary:
+      type: object
+      required: [totalTransactions, successRate, totalVolumeM, avgCostBps, avgLatencyS, activeCorridors, activeNodes, totalCost]
+      properties:
+        totalTransactions:
+          type: integer
+        successRate:
+          type: number
+        totalVolumeM:
+          type: number
+        avgCostBps:
+          type: number
+        avgLatencyS:
+          type: number
+        activeCorridors:
+          type: integer
+        activeNodes:
+          type: integer
+        totalCost:
+          type: number
+        nodeLoad:
+          type: number
+        queueDepthMs:
+          type: number
+
+    ActivityItem:
+      type: object
+      required: [id, type, message, srcCurrency, tgtCurrency, amount, status, timestamp]
+      properties:
+        id:
+          type: integer
+        type:
+          type: string
+        message:
+          type: string
+        srcCurrency:
+          type: string
+        tgtCurrency:
+          type: string
+        amount:
+          type: number
+        status:
+          type: string
+        timestamp:
+          type: string
+        txHash:
+          type: ["string", "null"]
